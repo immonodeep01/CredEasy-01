@@ -1,0 +1,26 @@
+# Runtime
+fastapi==0.110.1
+uvicorn==0.25.0
+python-dotenv>=1.0.1
+pydantic>=2.6.4
+motor==3.3.1
+pymongo==4.6.3
+python-multipart>=0.0.9
+httpx>=0.27.0
+openai>=1.54.0
+
+# Tests / tooling
+pytest>=8.0.0
+pytest-xdist>=3.6.0
+black>=24.1.1
+isort>=5.13.2
+flake8>=7.0.0
+mypy>=1.8.0
+
+# Removed 2026-08-26: never imported by server.py or tests. They came from the
+# project template and only widened the install and the CVE surface.
+#   boto3, requests-oauthlib, cryptography, pyjwt, bcrypt, passlib,
+#   python-jose  -- an auth stack this app does not use; Supabase signs and
+#                   verifies the tokens (see get_authenticated_user)
+#   requests     -- superseded by httpx, which the app actually uses
+#   pandas, numpy, jq, typer, email-validator, tzdata

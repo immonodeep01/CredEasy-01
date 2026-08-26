@@ -1,0 +1,180 @@
+{
+  "app_name": "HisabKitab",
+  "personality": "1 iOS-Native Clean",
+  "personality_one_liner": "A refined, trustworthy, and lightning-fast digital ledger built with ceramic paper tones and precise tactile financial typography.",
+  "color": {
+    "surface": "#F9F8F6",
+    "onSurface": "#1A1A1A",
+    "surfaceSecondary": "#FFFFFF",
+    "onSurfaceSecondary": "#1A1A1A",
+    "surfaceTertiary": "#F0EEEA",
+    "onSurfaceTertiary": "#555555",
+    "surfaceInverse": "#1C1C1E",
+    "onSurfaceInverse": "#F9F8F6",
+    "brand": "#2E473E",
+    "brandPrimary": "#2E473E",
+    "onBrandPrimary": "#FFFFFF",
+    "brandSecondary": "#4A6B5D",
+    "onBrandSecondary": "#FFFFFF",
+    "brandTertiary": "#E4ECE8",
+    "onBrandTertiary": "#2E473E",
+    "success": "#2D6A4F",
+    "onSuccess": "#FFFFFF",
+    "warning": "#B5838D",
+    "onWarning": "#FFFFFF",
+    "error": "#9B2226",
+    "onError": "#FFFFFF",
+    "info": "#3A6073",
+    "onInfo": "#FFFFFF",
+    "border": "#E2DFD8",
+    "borderStrong": "#2E473E",
+    "divider": "#EFECE6"
+  },
+  "typography": {
+    "displayFontFamily": "PlusJakartaSans",
+    "textFontFamily": "PlusJakartaSans",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Generous vertical breathing room with strict alignment and touch targets >= 44x44pt.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "1",
+  "navigation": "bottom_tabs",
+  "icon_set": "Ionicons",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use frosted glass on sticky header and bottom tab bar over scrolling ledger items",
+      "Apply translucent surface overlays on featured summary cards"
+    ],
+    "dont's": [
+      "Never blur form inputs or text content areas",
+      "Never stack multiple glass layers on top of each other"
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Dashboard",
+      "purpose": "At-a-glance financial health summary, total receivables/payables, quick action triggers, and recent transaction feeds.",
+      "states": {
+        "loading": "Centered botanical spinner with subtle status text",
+        "empty": "Clean ledger illustration with short prompt to add your first customer or supplier",
+        "error": "Readable network/sync error message with retry button"
+      },
+      "layout": "Sticky frosted header with business switcher and language toggle, summary card with 'You'll Give' vs 'You'll Get' totals, quick action buttons for 'You Gave' and 'You Got', and recent transaction feed with status badges."
+    },
+    {
+      "name": "Party List",
+      "purpose": "Manage all customers and suppliers with live running balances and instant search/filter options.",
+      "states": {
+        "loading": "Skeleton rows for party avatars and balances",
+        "empty": "Notebook icon with prompt to create party records",
+        "error": "Offline storage error message with retry"
+      },
+      "layout": "Search bar at top with filter pills (All, Customers, Suppliers, Settled), list of parties with avatar initials, running balance, and color-coded status indicator."
+    },
+    {
+      "name": "Party Detail",
+      "purpose": "Detailed chronological ledger for an individual party with running balance and quick reminder/payment actions.",
+      "states": {
+        "loading": "Skeleton transaction rows",
+        "empty": "No transactions recorded yet. Tap below to add first entry.",
+        "error": "Failed to load party ledger. Retry."
+      },
+      "layout": "Header with party name, phone, and net balance badge. Sticky action bar for WhatsApp reminder, Call, and UPI payment link. Chronological list of credit/debit entries."
+    },
+    {
+      "name": "Add Transaction",
+      "purpose": "Record a credit given ('You Gave') or payment received ('You Got') with amount, date, notes, and bill attachment.",
+      "states": {
+        "loading": "Saving spinner",
+        "empty": "Enter transaction details below",
+        "error": "Validation error or sync failure banner"
+      },
+      "layout": "Segmented tab toggle between 'You Gave' (Debit) and 'You Got' (Credit), large numeric keypad input, note field, optional bill photo attachment, and sticky bottom submit button."
+    },
+    {
+      "name": "Billing & Invoices",
+      "purpose": "Create itemized GST-enabled bills for customers with instant PDF generation and share options.",
+      "states": {
+        "loading": "Generating invoice skeleton",
+        "empty": "No items added to bill. Add item to begin.",
+        "error": "Failed to generate PDF. Check storage permission."
+      },
+      "layout": "Itemized table view with item name, qty, rate, GST toggle, tax calculation, total preview, and sticky 'Generate & Share PDF' button."
+    },
+    {
+      "name": "Reports & PDF Export",
+      "purpose": "Generate comprehensive business statements, day books, and party-wise ledger reports.",
+      "states": {
+        "loading": "Compiling report analytics",
+        "empty": "No financial records in selected date range",
+        "error": "Export failed. Retry."
+      },
+      "layout": "Date range picker, summary analytics cards, report type selector (Day Book, Profit/Loss summary, Party Ledger), and export options (PDF, CSV, Share via WhatsApp)."
+    },
+    {
+      "name": "Settings",
+      "purpose": "Configure business profile, security lock, UPI handles, multi-language preferences, and backup sync.",
+      "states": {
+        "loading": "Loading preferences",
+        "empty": "No settings available",
+        "error": "Failed to load settings"
+      },
+      "layout": "Grouped iOS-style preference rows for Business Details, Security & Biometric Lock, UPI VPA setup, Language (English / Hindi), Sync status, and About."
+    },
+    {
+      "name": "App Lock Screen",
+      "purpose": "Secure ledger records with PIN or biometric authentication.",
+      "states": {
+        "loading": "Authenticating",
+        "empty": "Enter 4-digit PIN",
+        "error": "Incorrect PIN. Try again."
+      },
+      "layout": "Centered lock icon, business title 'HisabKitab', 4-digit PIN indicator dots, secure numeric keypad, and biometric fingerprint trigger."
+    }
+  ],
+  "images": {
+    "hero_ledger": {
+      "url": "https://images.unsplash.com/photo-1531346878377-a5be20888e57",
+      "dark": "https://images.unsplash.com/photo-1531346852511-e39bf96dc721",
+      "alt": "Minimal ceramic ledger notebook background"
+    },
+    "empty_state": {
+      "url": "https://images.unsplash.com/photo-1579808352667-5db8c02598ce",
+      "alt": "Clean accounting paper sheet representing empty state"
+    }
+  },
+  "instructions_to_main_agent": "Ensure absolute adherence to iOS-Native Clean personality with ceramic paper tones (#F9F8F6), botanical deep green brand accents (#2E473E), and high-contrast status colors. Maintain touch targets >= 44x44pt and safe area compliance. Every screen must support loading, empty, and error states gracefully. UPI link generation, PDF export, multi-language switching (English + Hindi), and PIN/Biometric lock flows must be fully interactive and wired correctly. Avoid purple/indigo hues entirely."
+}
