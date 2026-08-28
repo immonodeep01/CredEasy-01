@@ -24,7 +24,22 @@
       "Bash(git -C \"C:\\\\Users\\\\Monodeep Deb\\\\Desktop\\\\CredEasy-Emergent\\\\CredEasy-Emergent-main\" diff --stat)",
       "Bash(git check-ignore *)",
       "Bash(node --check metro.config.js)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(Get-ChildItem -Recurse -Depth 2)",
+      "Bash(Select-Object FullName, Length, LastWriteTime)",
+      "Bash(Format-Table -AutoSize)",
+      "Bash(git ls-tree *)",
+      "Bash(git submodule *)",
+      "Bash(powershell -NoProfile -Command \"Get-Content 'C:\\\\Users\\\\Monodeep Deb\\\\Desktop\\\\CredEasy-Emergent\\\\CredEasy-Emergent-main\\\\frontend\\\\.tmp-audit\\\\fresh.json' -TotalCount 5\")",
+      "Bash(Get-ChildItem -Path . -Name)",
+      "Bash(Select-Object -First 5)",
+      "Bash(Test-Path *)",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\Monodeep Deb\\\\.claude' -Filter 'CLAUDE.md' -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName\")",
+      "Bash(node -e \"console.log\\(require\\('path'\\).resolve\\('../../../node_modules/@react-native-async-storage/async-storage/package.json'\\)\\); console.log\\(require\\('path'\\).resolve\\('../../../../node_modules/@react-native-async-storage/async-storage/package.json'\\)\\);\")",
+      "Bash(git *)",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\Monodeep Deb\\\\Desktop\\\\CredEasy-Emergent\\\\CredEasy-Emergent-main' -Filter 'CLAUDE.md' -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName\")",
+      "Bash(node -e \"console.log\\('3-up exists:', require\\('fs'\\).existsSync\\(require\\('path'\\).resolve\\('../../../node_modules/@react-native-async-storage/async-storage/package.json'\\)\\)\\); console.log\\('4-up exists:', require\\('fs'\\).existsSync\\(require\\('path'\\).resolve\\('../../../../node_modules/@react-native-async-storage/async-storage/package.json'\\)\\)\\);\")",
+      "Bash(Get-ChildItem *)"
     ]
   }
 }
