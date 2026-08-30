@@ -1,4 +1,5 @@
 from fastapi import FastAPI, APIRouter, File, UploadFile, HTTPException, Header, Depends
+from starlette.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -85,6 +86,12 @@ ALLOWED_ROUTES = {"dashboard", "parties", "billing", "reports", "settings"}
 class VoiceAssistRequest(BaseModel):
     transcript: str = Field(default="", max_length=MAX_TRANSCRIPT_LEN)
     context: Dict[str, Any] = Field(default_factory=dict)
+    lang: str = Field(default="en", max_length=8)
+    history: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class SpeakRequest(BaseModel):
+    text: str = Field(default="", max_length=2000)
     lang: str = Field(default="en", max_length=8)
 
 
@@ -250,6 +257,48 @@ async def voice_transcribe(file: UploadFile = File(...), user: dict = Depends(ge
     return {"text": getattr(result, "text", "") or ""}
 
 
+@api_router.post("/voice/speak")
+async def voice_speak(payload: SpeakRequest, user: dict = Depends(get_authenticated_user)):
+    """Synthesize text to speech and stream the MP3 back.
+
+    Returns the audio as a streaming response so the client can play() while
+    bytes are still arriving. If TTS fails for any reason, the assistant's
+    on-screen text reply still works — speech is a progressive enhancement.
+    """
+    enforce_user_rate_limit(str(user["user_id"]))
+
+    text = (payload.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    # Cap at 2000 chars — OpenAI's hard limit is 4096 but shopkeeper replies
+    # rarely exceed a couple of sentences; 2000 keeps cost bounded.
+    text = text[:2000]
+
+    # gpt-4o-mini-tts reads Hinglish cleanly with alloy. A separate Hindi voice
+    # is unnecessary and adds complexity.
+    model = os.environ.get("TTS_MODEL", "gpt-4o-mini-tts")
+    voice = "alloy"
+
+    try:
+        openai_client = get_openai_client()
+        response = await openai_client.audio.speech.with_streaming_response.create(
+            model=model,
+            voice=voice,
+            input=text,
+            response_format="mp3",
+        )
+        return StreamingResponse(
+            response.iter_bytes(),
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "inline"},
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("TTS failed")
+        raise HTTPException(status_code=502, detail="Could not synthesize speech. Please try again.")
+
+
 VOICE_SYSTEM_PROMPT = """You are CredEasy Assistant, a voice helper inside CredEasy — a digital khata (credit ledger) app used by small Indian shopkeepers.
 The user speaks Hindi, English or Hinglish. You do three things:
 1. RECORD entries: e.g. "Ramesh ko 500 rupaye udhaar diye" -> add a GAVE transaction of 500 for party Ramesh.
@@ -271,7 +320,11 @@ Allowed actions (0 to 2 items):
 
 Rules:
 - Only emit ADD_TRANSACTION when an amount AND a party are clearly stated. Otherwise ask for what is missing in "reply" with an empty actions array.
-- Match partyName to the closest existing party name from CONTEXT when possible.- For pure questions, answer with numbers from CONTEXT and return an empty actions array.
+- If the user says something vague ("do something for Ramesh", "update that", "batao"), ask a clarifying question in the SAME language before acting. Do not guess.
+  Example: user says "Ramesh ko 500 diye" but no Ramesh exists → ask "Kaunsa Ramesh? Ramesh Kumar ya Ramesh Sharma?"
+  Example: user says "uska baaki check karo" → ask "Kaunsa customer ka baaki?"
+- Match partyName to the closest existing party name from CONTEXT when possible.
+- For pure questions, answer with numbers from CONTEXT and return an empty actions array.
 - Amounts are Indian rupees; convert words like "paanch sau" to 500.
 - Never invent balances that are not in CONTEXT.
 """
@@ -362,12 +415,18 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
 
     try:
         openai_client = get_openai_client()
+
+        messages: List[Dict[str, str]] = [{"role": "system", "content": VOICE_SYSTEM_PROMPT}]
+        # Include last 6 conversation turns so the model can ask clarifying questions.
+        for turn in payload.history[-6:]:
+            messages.append({"role": "user", "content": turn.get("user", "")})
+            if turn.get("assistant"):
+                messages.append({"role": "assistant", "content": turn["assistant"]})
+        messages.append({"role": "user", "content": user_text})
+
         response = await openai_client.chat.completions.create(
             model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=[
-                {"role": "system", "content": VOICE_SYSTEM_PROMPT},
-                {"role": "user", "content": user_text},
-            ],
+            messages=messages,
             temperature=0.2,
             response_format={"type": "json_object"},
         )
