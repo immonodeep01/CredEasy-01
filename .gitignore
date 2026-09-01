@@ -86,3 +86,9 @@ android-sdk/
 credentials.json
 *.key
 .credentials
+
+# Android release signing — never commit a real keystore.
+# debug.keystore is committed by Expo (well-known test key) and may stay.
+*.jks
+*.keystore
+!android/app/debug.keystore
