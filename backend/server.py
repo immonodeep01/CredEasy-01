@@ -2,7 +2,6 @@ from fastapi import FastAPI, APIRouter, File, UploadFile, HTTPException, Header,
 from starlette.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
 from openai import AsyncOpenAI
 import httpx
 import json
@@ -15,8 +14,6 @@ from pathlib import Path
 from collections import defaultdict
 from pydantic import BaseModel, Field
 from typing import Any, Dict, List, Optional
-import uuid
-from datetime import datetime, timezone
 
 
 # Configured before anything else so import-time failures below are logged
@@ -30,11 +27,6 @@ logger = logging.getLogger(__name__)
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-# MongoDB connection
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
-
 # Supabase issues and signs the app's session tokens, so this server verifies
 # them rather than minting its own. The anon key is public by design — it is
 # sent as the `apikey` header Supabase's auth API requires, not as a secret.
@@ -45,23 +37,12 @@ SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     yield
-    client.close()
 
 
 app = FastAPI(lifespan=lifespan)
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
-
-
-# Define Models
-class StatusCheck(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-class StatusCheckCreate(BaseModel):
-    client_name: str = Field(min_length=1, max_length=200)
 
 # Add your routes to the router instead of directly to app
 VOICE_RATE_LIMIT_PER_MINUTE = 20
@@ -187,6 +168,43 @@ async def auth_me(user: dict = Depends(get_authenticated_user)):
             "picture": user.get("picture"),
         }
     }
+
+
+@api_router.delete("/auth/account")
+async def delete_account(user: dict = Depends(get_authenticated_user)):
+    """Delete the authenticated user's account from Supabase Auth.
+
+    This endpoint requires the SUPABASE_SERVICE_ROLE_KEY environment variable.
+    Without it, this endpoint returns 500.
+    """
+    service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+    if not service_role_key:
+        logger.error("SUPABASE_SERVICE_ROLE_KEY is not configured")
+        raise HTTPException(status_code=500, detail="Account deletion is not configured on the server")
+
+    user_id = user["user_id"]
+
+    try:
+        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as httpx_client:
+            resp = await httpx_client.delete(
+                f"{SUPABASE_URL}/auth/v1/admin/users/{user_id}",
+                headers={
+                    "Authorization": f"Bearer {service_role_key}",
+                    "apikey": service_role_key,
+                    "Content-Type": "application/json"
+                },
+            )
+
+        if resp.status_code in (200, 204):
+            return {"success": True, "message": "Account deleted successfully"}
+        else:
+            logger.error(f"Failed to delete account: {resp.status_code} {resp.text}")
+            raise HTTPException(status_code=500, detail="Failed to delete account. Please try again.")
+
+    except Exception as e:
+        logger.exception("Account deletion request failed")
+        raise HTTPException(status_code=500, detail="Could not delete account. Please try again.")
+
 
 @api_router.get("/")
 async def root():
@@ -461,20 +479,6 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
         "actions": sanitize_actions(parsed.get("actions")),
         "transcript": transcript,
     }
-
-# Authenticated and rate limited: these were open to the internet, so anyone
-# could write unbounded documents into the database and read back every entry.
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate, user: dict = Depends(get_authenticated_user)):
-    enforce_user_rate_limit(str(user["user_id"]))
-    status_obj = StatusCheck(client_name=input.client_name)
-    _ = await db.status_checks.insert_one(status_obj.model_dump())
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks(user: dict = Depends(get_authenticated_user)):
-    status_checks = await db.status_checks.find({}, {"_id": 0}).to_list(1000)
-    return [StatusCheck(**status_check) for status_check in status_checks]
 
 # Include the router in the main app
 app.include_router(api_router)

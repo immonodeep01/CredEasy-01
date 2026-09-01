@@ -1,7 +1,6 @@
 import os
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,9 +8,6 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-os.environ.setdefault('MONGO_URL', 'mongodb://localhost:27017')
-os.environ.setdefault('DB_NAME', 'credeasy_test')
 
 import server
 
@@ -25,29 +21,6 @@ SUPABASE_USER_PAYLOAD = {
         'avatar_url': 'https://example.com/avatar.png',
     },
 }
-
-
-class FakeCollection:
-    def __init__(self, records=None):
-        self.records = records or []
-
-    async def find_one(self, query=None, projection=None):
-        if query is None:
-            return None
-        for key in ('email', 'user_id', 'id'):
-            if key in query:
-                for record in self.records:
-                    if record.get(key) == query[key]:
-                        return record
-                return None
-        return None
-
-    async def insert_one(self, document):
-        self.records.append(document)
-        return SimpleNamespace(inserted_id='fake-id')
-
-    async def create_index(self, *args, **kwargs):
-        return None
 
 
 def stub_supabase(monkeypatch, status_code, payload):
@@ -73,9 +46,6 @@ def stub_supabase(monkeypatch, status_code, payload):
 
 @pytest.fixture
 def client(monkeypatch):
-    fake_db = SimpleNamespace(status_checks=FakeCollection())
-    monkeypatch.setattr(server, 'db', fake_db)
-
     # The dependency reads these as module globals at call time, so setting them
     # here keeps the suite independent of whatever is in backend/.env.
     monkeypatch.setattr(server, 'SUPABASE_URL', 'https://example.supabase.co')
@@ -155,14 +125,6 @@ class TestProtectedRoutes:
     """Every /api route that touches data must require a token. These were open
     to the internet before the audit."""
 
-    def test_status_post_requires_auth(self, client):
-        response = client.post('/api/status', json={'client_name': 'x'})
-        assert response.status_code == 401
-
-    def test_status_get_requires_auth(self, client):
-        response = client.get('/api/status')
-        assert response.status_code == 401
-
     def test_voice_assist_requires_auth(self, client):
         response = client.post('/api/voice/assist', json={'transcript': 'hello'})
         assert response.status_code == 401
@@ -170,16 +132,6 @@ class TestProtectedRoutes:
     def test_voice_transcribe_requires_auth(self, client):
         response = client.post('/api/voice/transcribe', files={'file': ('a.m4a', b'x', 'audio/mp4')})
         assert response.status_code == 401
-
-    def test_status_post_succeeds_with_a_valid_token(self, client, monkeypatch):
-        stub_supabase(monkeypatch, 200, SUPABASE_USER_PAYLOAD)
-        response = client.post(
-            '/api/status',
-            json={'client_name': 'shop-tablet'},
-            headers={'Authorization': 'Bearer good-token'},
-        )
-        assert response.status_code == 200
-        assert response.json()['client_name'] == 'shop-tablet'
 
 
 class TestHealthCheck:
