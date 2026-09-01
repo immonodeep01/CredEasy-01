@@ -212,6 +212,26 @@ async def root():
     return {"message": "Hello World"}
 
 
+@api_router.get("/debug/groq")
+async def debug_groq():
+    """Diagnostic endpoint to verify which Groq models are accessible."""
+    api_key = get_groq_api_key()
+    if not api_key:
+        return {"groq_configured": False, "reason": "GROQ_API_KEY not set"}
+    try:
+        client = get_groq_client()
+        models_response = await client.models.list()
+        all_models = [m.id for m in models_response.data]
+        return {
+            "groq_configured": True,
+            "key_length": len(api_key),
+            "all_models": all_models,
+            "count": len(all_models),
+        }
+    except Exception as e:
+        return {"groq_configured": True, "error": str(e), "key_length": len(api_key)}
+
+
 # ---------------------------------------------------------------------------
 # Voice Assistant: Whisper transcription + LLM intent parsing
 # ---------------------------------------------------------------------------
