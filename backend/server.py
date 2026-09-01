@@ -302,7 +302,7 @@ async def voice_transcribe(file: UploadFile = File(...), user: dict = Depends(ge
         try:
             groq_client = get_groq_client()
             result = await groq_client.audio.transcriptions.create(
-                model="whisper-large-v3",
+                model="whisper-large-v3-turbo",  # faster, free tier model
                 file=(f"recording{suffix}", audio),
                 prompt="Hindi and English (Hinglish) shopkeeper ledger speech. Preserve names, numbers and rupee amounts.",
             )
@@ -530,20 +530,28 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
             available_models = []
             try:
                 models_response = await groq_client.models.list()
+                # Accept any model that could be a chat model, including namespaced ones
                 available_models = [
                     m.id for m in models_response.data
-                    if "llama" in m.id.lower() or "mixtral" in m.id.lower() or "gemma" in m.id.lower()
+                    if any(tag in m.id.lower() for tag in [
+                        "llama", "mixtral", "gemma", "qwen", "allam", "compound", "gpt-oss"
+                    ])
                 ]
             except Exception as e:
                 logger.warning("Could not list Groq models: %s", e)
 
-            # Prefer a smaller / more universally available model first
+            # Prefer smaller/faster models first; all are free tier on Groq.
+            # Models prefixed with "groq/", "openai/" etc. need the full ID.
             preferred = [
+                "qwen/qwen3.8-27b",
+                "qwen/qwen3.6-27b",
+                "allam-2-7b",
+                "groq/compound-mini",
+                "groq/compound",
+                "openai/gpt-oss-20b",
+                "openai/gpt-oss-120b",
                 "llama-3.1-8b-instant",
                 "llama-3.3-70b-versatile",
-                "llama3-8b-8192",
-                "llama3-70b-8192",
-                "mixtral-8x7b-32768",
             ]
             chosen_model = None
             for p in preferred:
