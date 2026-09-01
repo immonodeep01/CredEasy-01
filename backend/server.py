@@ -224,7 +224,12 @@ _groq_client: Optional[groq.AsyncGroq] = None
 def get_groq_api_key() -> Optional[str]:
     """Groq is the primary provider — free tier, no credit card needed.
     Used for chat completions and Whisper transcription."""
-    return os.environ.get("GROQ_API_KEY") or None
+    key = os.environ.get("GROQ_API_KEY") or os.environ.get("GROQ_APIKEY") or None
+    if key:
+        logger.info(f"GROQ_API_KEY found (length={len(key)})")
+    else:
+        logger.warning("GROQ_API_KEY not found in environment")
+    return key
 
 
 def get_openai_api_key() -> Optional[str]:
@@ -503,7 +508,6 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
                 model="llama-3.1-8b-instant",  # Groq's free tier model
                 messages=messages,
                 temperature=0.2,
-                response_format={"type": "json_object"},
             )
             text = response.choices[0].message.content or ""
         except Exception as e:
