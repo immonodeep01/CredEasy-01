@@ -500,7 +500,7 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
         try:
             groq_client = get_groq_client()
             response = await groq_client.chat.completions.create(
-                model="llama-3.3-70b-versatile",  # Groq's best free model
+                model="llama-3.1-8b-instant",  # Groq's free tier model
                 messages=messages,
                 temperature=0.2,
                 response_format={"type": "json_object"},
