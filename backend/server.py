@@ -3,6 +3,7 @@ from starlette.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from openai import AsyncOpenAI
+import groq
 import httpx
 import json
 import math
@@ -217,27 +218,42 @@ async def root():
 ALLOWED_AUDIO_EXT = {".m4a", ".mp3", ".mp4", ".mpeg", ".mpga", ".wav", ".webm"}
 
 _openai_client: Optional[AsyncOpenAI] = None
+_groq_client: Optional[groq.AsyncGroq] = None
 
 
-def get_llm_api_key() -> str:
-    api_key = (
+def get_groq_api_key() -> Optional[str]:
+    """Groq is the primary provider — free tier, no credit card needed.
+    Used for chat completions and Whisper transcription."""
+    return os.environ.get("GROQ_API_KEY") or None
+
+
+def get_openai_api_key() -> Optional[str]:
+    """OpenAI is the fallback if Groq is unavailable or exhausted."""
+    return (
         os.environ.get("OPENAI_API_KEY")
         or os.environ.get("LLM_API_KEY")
         or os.environ.get("EMERGENT_LLM_KEY")
-        or ""
+        or None
     )
-    if not api_key:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY or LLM_API_KEY is not configured")
-    return api_key
+
+
+def get_groq_client() -> groq.AsyncGroq:
+    global _groq_client
+    if _groq_client is None:
+        api_key = get_groq_api_key()
+        if not api_key:
+            raise HTTPException(status_code=500, detail="GROQ_API_KEY is not configured")
+        _groq_client = groq.AsyncGroq(api_key=api_key)
+    return _groq_client
 
 
 def get_openai_client() -> AsyncOpenAI:
-    """Built on first use and reused. A fresh AsyncOpenAI per request stands up a
-    new httpx connection pool every time and throws away connection reuse; it is
-    built lazily so an unconfigured key fails the request, not module import."""
     global _openai_client
     if _openai_client is None:
-        _openai_client = AsyncOpenAI(api_key=get_llm_api_key())
+        api_key = get_openai_api_key()
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured")
+        _openai_client = AsyncOpenAI(api_key=api_key)
     return _openai_client
 
 
@@ -255,31 +271,44 @@ async def voice_transcribe(file: UploadFile = File(...), user: dict = Depends(ge
     if len(audio) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="Audio must be 25 MB or smaller")
 
-    try:
-        # Handed to the SDK as an in-memory (filename, bytes) pair. The previous
-        # version spooled it to a NamedTemporaryFile, which blocked the event
-        # loop on every read/write and leaked the file whenever the write itself
-        # failed (the cleanup path only knew the name after a successful write).
-        openai_client = get_openai_client()
-        result = await openai_client.audio.transcriptions.create(
-            model="whisper-1",
-            file=(f"recording{suffix}", audio),
-            prompt="Hindi and English (Hinglish) shopkeeper ledger speech. Preserve names, numbers and rupee amounts.",
-        )
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("transcription failed")
-        raise HTTPException(status_code=502, detail="Could not transcribe the recording. Please try again.")
+    # Try Groq first (free Whisper), fall back to OpenAI.
+    last_error = None
+    if get_groq_api_key():
+        try:
+            groq_client = get_groq_client()
+            result = await groq_client.audio.transcriptions.create(
+                model="whisper-large-v3",
+                file=(f"recording{suffix}", audio),
+                prompt="Hindi and English (Hinglish) shopkeeper ledger speech. Preserve names, numbers and rupee amounts.",
+            )
+            return {"text": getattr(result, "text", "") or ""}
+        except Exception as e:
+            logger.warning("Groq transcription failed, falling back to OpenAI: %s", e)
+            last_error = e
 
-    return {"text": getattr(result, "text", "") or ""}
+    if get_openai_api_key():
+        try:
+            openai_client = get_openai_client()
+            result = await openai_client.audio.transcriptions.create(
+                model="whisper-1",
+                file=(f"recording{suffix}", audio),
+                prompt="Hindi and English (Hinglish) shopkeeper ledger speech. Preserve names, numbers and rupee amounts.",
+            )
+            return {"text": getattr(result, "text", "") or ""}
+        except Exception as e:
+            logger.exception("OpenAI transcription failed")
+            last_error = e
+
+    logger.exception("transcription failed: no provider succeeded")
+    raise HTTPException(status_code=502, detail="Could not transcribe the recording. Please try again.")
 
 
 @api_router.post("/voice/speak")
 async def voice_speak(payload: SpeakRequest, user: dict = Depends(get_authenticated_user)):
     """Synthesize text to speech and stream the MP3 back.
 
-    Returns the audio as a streaming response so the client can play() while
+    Uses Edge TTS (free, no API key) for TTS, with OpenAI as fallback.
+    Returns audio as a streaming response so the client can play() while
     bytes are still arriving. If TTS fails for any reason, the assistant's
     on-screen text reply still works — speech is a progressive enhancement.
     """
@@ -288,33 +317,57 @@ async def voice_speak(payload: SpeakRequest, user: dict = Depends(get_authentica
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
-    # Cap at 2000 chars — OpenAI's hard limit is 4096 but shopkeeper replies
-    # rarely exceed a couple of sentences; 2000 keeps cost bounded.
     text = text[:2000]
 
-    # gpt-4o-mini-tts reads Hinglish cleanly with alloy. A separate Hindi voice
-    # is unnecessary and adds complexity.
-    model = os.environ.get("TTS_MODEL", "gpt-4o-mini-tts")
-    voice = "alloy"
+    # Pick a voice that handles Hindi + English well. Edge TTS voices are free.
+    lang = (payload.lang or "en").lower()
+    # Hindi voices: hi-IN-SwaraNeural (female), hi-IN-MadhurNeural (male)
+    # English voices: en-US-JennyNeural, en-US-GuyNeural
+    if lang.startswith("hi"):
+        voice = "hi-IN-SwaraNeural"
+    else:
+        voice = "en-US-JennyNeural"
 
+    # Try Edge TTS first (completely free, no API key needed)
     try:
-        openai_client = get_openai_client()
-        response = await openai_client.audio.speech.with_streaming_response.create(
-            model=model,
-            voice=voice,
-            input=text,
-            response_format="mp3",
-        )
-        return StreamingResponse(
-            response.iter_bytes(),
-            media_type="audio/mpeg",
-            headers={"Content-Disposition": "inline"},
-        )
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("TTS failed")
-        raise HTTPException(status_code=502, detail="Could not synthesize speech. Please try again.")
+        import edge_tts
+        communicate = edge_tts.Communicate(text, voice)
+        # Generate to bytes
+        audio_bytes = b""
+        async for chunk in communicate.stream():
+            if chunk["type"] == "audio":
+                audio_bytes += chunk["data"]
+        if audio_bytes:
+            return StreamingResponse(
+                iter([audio_bytes]),
+                media_type="audio/mpeg",
+                headers={"Content-Disposition": "inline"},
+            )
+    except ImportError:
+        logger.warning("edge-tts not installed, trying fallback")
+    except Exception as e:
+        logger.warning("Edge TTS failed, trying OpenAI fallback: %s", e)
+
+    # Fallback to OpenAI if available
+    if get_openai_api_key():
+        try:
+            model = os.environ.get("TTS_MODEL", "gpt-4o-mini-tts")
+            openai_client = get_openai_client()
+            response = await openai_client.audio.speech.with_streaming_response.create(
+                model=model,
+                voice="alloy",
+                input=text,
+                response_format="mp3",
+            )
+            return StreamingResponse(
+                response.iter_bytes(),
+                media_type="audio/mpeg",
+                headers={"Content-Disposition": "inline"},
+            )
+        except Exception:
+            logger.exception("OpenAI TTS failed")
+
+    raise HTTPException(status_code=502, detail="Could not synthesize speech. Please try again.")
 
 
 VOICE_SYSTEM_PROMPT = """You are CredEasy Assistant, a voice helper inside CredEasy — a digital khata (credit ledger) app used by small Indian shopkeepers.
@@ -431,24 +484,49 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
 
     user_text = f"CONTEXT (current ledger):\n{context_json}\n\nUSER SAID: {transcript}"
 
-    try:
-        openai_client = get_openai_client()
+    messages: List[Dict[str, str]] = [{"role": "system", "content": VOICE_SYSTEM_PROMPT}]
+    # Include last 6 conversation turns so the model can ask clarifying questions.
+    for turn in payload.history[-6:]:
+        messages.append({"role": "user", "content": turn.get("user", "")})
+        if turn.get("assistant"):
+            messages.append({"role": "assistant", "content": turn["assistant"]})
+    messages.append({"role": "user", "content": user_text})
 
-        messages: List[Dict[str, str]] = [{"role": "system", "content": VOICE_SYSTEM_PROMPT}]
-        # Include last 6 conversation turns so the model can ask clarifying questions.
-        for turn in payload.history[-6:]:
-            messages.append({"role": "user", "content": turn.get("user", "")})
-            if turn.get("assistant"):
-                messages.append({"role": "assistant", "content": turn["assistant"]})
-        messages.append({"role": "user", "content": user_text})
+    text = ""
+    last_error = None
 
-        response = await openai_client.chat.completions.create(
-            model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
-            messages=messages,
-            temperature=0.2,
-            response_format={"type": "json_object"},
-        )
-        text = response.choices[0].message.content or ""
+    # Try Groq first (free Llama), fall back to OpenAI
+    if get_groq_api_key():
+        try:
+            groq_client = get_groq_client()
+            response = await groq_client.chat.completions.create(
+                model="llama-3.3-70b-versatile",  # Groq's best free model
+                messages=messages,
+                temperature=0.2,
+                response_format={"type": "json_object"},
+            )
+            text = response.choices[0].message.content or ""
+        except Exception as e:
+            logger.warning("Groq chat failed, falling back to OpenAI: %s", e)
+            last_error = e
+
+    # Fallback to OpenAI if Groq failed or not configured
+    if not text and get_openai_api_key():
+        try:
+            openai_client = get_openai_client()
+            response = await openai_client.chat.completions.create(
+                model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+                messages=messages,
+                temperature=0.2,
+                response_format={"type": "json_object"},
+            )
+            text = response.choices[0].message.content or ""
+        except Exception as e:
+            logger.exception("OpenAI chat failed")
+            last_error = e
+
+    if not text:
+        raise HTTPException(status_code=502, detail="The assistant is unavailable right now. Please try again.")
     except HTTPException:
         raise
     except Exception:
