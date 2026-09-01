@@ -527,11 +527,6 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
 
     if not text:
         raise HTTPException(status_code=502, detail="The assistant is unavailable right now. Please try again.")
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception("voice assist failed")
-        raise HTTPException(status_code=502, detail="The assistant is unavailable right now. Please try again.")
 
     cleaned = text.strip()
     if cleaned.startswith("```"):
