@@ -504,8 +504,44 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
     if get_groq_api_key():
         try:
             groq_client = get_groq_client()
+            # Discover the first available chat model on the account — Groq has
+            # changed model names over time and "not found" on the right tier
+            # is the most common reason a free key stops working.
+            available_models = []
+            try:
+                models_response = await groq_client.models.list()
+                available_models = [
+                    m.id for m in models_response.data
+                    if "llama" in m.id.lower() or "mixtral" in m.id.lower() or "gemma" in m.id.lower()
+                ]
+            except Exception as e:
+                logger.warning("Could not list Groq models: %s", e)
+
+            # Prefer a smaller / more universally available model first
+            preferred = [
+                "llama-3.1-8b-instant",
+                "llama-3.3-70b-versatile",
+                "llama3-8b-8192",
+                "llama3-70b-8192",
+                "mixtral-8x7b-32768",
+            ]
+            chosen_model = None
+            for p in preferred:
+                if p in available_models:
+                    chosen_model = p
+                    break
+            if not chosen_model and available_models:
+                chosen_model = available_models[0]
+
+            if not chosen_model:
+                # Fall through to a known-good name; the call will 404 if it's
+                # truly gone, and the OpenAI fallback picks up after that.
+                chosen_model = "llama-3.1-8b-instant"
+
+            logger.info(f"Using Groq model: {chosen_model} (available: {available_models[:5]})")
+
             response = await groq_client.chat.completions.create(
-                model="llama-3.1-8b-instant",  # Groq's free tier model
+                model=chosen_model,
                 messages=messages,
                 temperature=0.2,
             )
@@ -530,7 +566,7 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
             last_error = e
 
     if not text:
-        raise HTTPException(status_code=502, detail="The assistant is unavailable right now. Please try again.")
+        raise HTTPException(status_code=502, detail="The assistant is unavailable. Please add credits to your AI provider account.")
 
     cleaned = text.strip()
     if cleaned.startswith("```"):
