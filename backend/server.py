@@ -71,10 +71,14 @@ def _setup_telemetry(app):
     except Exception as e:
         logging.getLogger(__name__).warning(f"Failed to instrument FastAPI: {e}")
 
-    # Capture prompt/completion content (toggle via OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT)
-    os.environ.setdefault(
-        "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "span_and_event"
-    )
+    # In dev, capture prompt/completion content for inspection.
+    # In production, do NOT capture message content — it can include
+    # the shopkeeper's ledger context and party names. PII off by default.
+    if os.environ.get("OTEL_SDK_DISABLED", "").lower() not in ("1", "true", "yes"):
+        os.environ.setdefault(
+            "OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT",
+            "false" if os.environ.get("ENVIRONMENT", "production") == "production" else "span_and_event"
+        )
     try:
         from opentelemetry.instrumentation.openai_v2 import OpenAIInstrumentor
         OpenAIInstrumentor().instrument()
@@ -245,63 +249,6 @@ async def get_optional_user(authorization: Optional[str] = Header(None)) -> Opti
         "user_id": data["id"],
         "email": data.get("email") or metadata.get("email") or "",
         "name": metadata.get("full_name") or data.get("confirmed_at") or data["id"][:8],
-    }
-    """Resolve the current user from a Supabase access token. Raises 401, never 403.
-
-    This replaces a second, parallel session system: the server used to mint its
-    own `st_...` tokens into db.user_sessions, while the app only ever held a
-    Supabase JWT. The two could never agree, so every authenticated route
-    rejected every request. Asking Supabase to validate its own token leaves one
-    source of truth and lets the Mongo users/user_sessions collections go away.
-    """
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    token = authorization.split(" ", 1)[1].strip()
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing session token")
-
-    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
-        # A misconfigured server must not masquerade as a rejected user, or the
-        # whole fleet looks like every shopkeeper's token expired at once.
-        logger.error("SUPABASE_URL / SUPABASE_ANON_KEY are not configured")
-        raise HTTPException(status_code=500, detail="Authentication is not configured on the server")
-
-    try:
-        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as httpx_client:
-            resp = await httpx_client.get(
-                f"{SUPABASE_URL}/auth/v1/user",
-                headers={"Authorization": f"Bearer {token}", "apikey": SUPABASE_ANON_KEY},
-            )
-    except Exception:
-        # 503, not 401: "we could not check" is not "your token is bad", and
-        # returning 401 for a network blip signs the user out of the app.
-        logger.exception("Supabase token verification request failed")
-        raise HTTPException(status_code=503, detail="Could not verify your session. Please try again.")
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=401, detail="Invalid or expired session")
-
-    try:
-        data = resp.json()
-    except ValueError:
-        logger.error("Supabase /auth/v1/user returned a non-JSON body")
-        raise HTTPException(status_code=502, detail="Could not verify your session. Please try again.")
-
-    if not isinstance(data, dict):
-        raise HTTPException(status_code=502, detail="Could not verify your session. Please try again.")
-
-    user_id = data.get("id")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Invalid or expired session")
-
-    metadata = data.get("user_metadata")
-    if not isinstance(metadata, dict):
-        metadata = {}
-
-    return {
-        "user_id": str(user_id),
-        "email": data.get("email") or "",
-        "name": metadata.get("full_name") or metadata.get("name") or "",
         "picture": metadata.get("avatar_url"),
     }
 
@@ -382,26 +329,10 @@ async def root():
 
 @api_router.get("/health")
 async def health():
-    """Liveness probe — reports service status and dependency readiness.
-
-    Returns 200 with a JSON body describing each external dependency the server
-    relies on. Useful for uptime monitoring and pre-deploy checks. Does not
-    require auth so external monitors can hit it without a Supabase token.
+    """Liveness probe — sufficient for uptime monitors and deploy checks.
+    Does not leak internal dependency configuration.
     """
-    deps = {
-        "supabase": bool(SUPABASE_URL and SUPABASE_ANON_KEY),
-        "groq": bool(os.environ.get("GROQ_API_KEY") or os.environ.get("GROQ_APIKEY")),
-        "openai": bool(
-            os.environ.get("OPENAI_API_KEY")
-            or os.environ.get("LLM_API_KEY")
-            or os.environ.get("EMERGENT_LLM_KEY")
-        ),
-    }
-    return {
-        "status": "ok",
-        "service": "credeasy-backend",
-        "dependencies": deps,
-    }
+    return {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
