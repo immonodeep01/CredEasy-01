@@ -11,6 +11,18 @@
 
 <!-- Add completed features below this line -->
 
+### 2026-09-04 — 5 Feature Fixes (OAuth, notifications, onboarding, auto-PDF, import)
+**Feature:** Fix Google Drive OAuth, create notifications page, reorder onboarding, auto-download PDF, verify import
+**Status:** Completed
+
+**Summary:**
+- **Google Drive OAuth fix (`src/lib/google-drive.ts`):** Changed `preferLocalhost: true` (which resolves to `http://localhost`) to `buildRedirectUri()` — uses `scheme: 'credeasy'` on native (Android/iOS) and `makeRedirectUri()` on web. `http://localhost` fails on Android because Google blocks it for installed/native apps under "comply with Google OAuth 2.0 policy"; the app's registered `credeasy://` scheme (declared in `app.json`) is the correct native redirect. User must add `credeasy://` as an authorized redirect URI in Google Cloud Console alongside the existing `http://localhost`.
+- **Notifications page (`app/notifications.tsx`):** New screen at `/notifications`. Built from ledger data: overdue party reminders (with "Send reminder" WhatsApp button), recent transaction activity (last 7 days), and a system notification for incomplete business profiles. Mark-all-read, per-item navigation to party detail, unread dot indicator. Generic `StorageService.getRaw()` / `setRaw()` helpers added to `storage-service.ts`.
+- **Bell icon now points to `/notifications` (`app/(tabs)/index.tsx`):** The notification bell in the home top bar now navigates to `/notifications` instead of `/(tabs)/reports`. The red badge still shows the count of parties with outstanding receivable balances.
+- **Onboarding step reorder (`app/onboarding.tsx`):** Sign-in moved from step 2 to step 1. New order: Welcome → Google Sign-in → Business Setup → Terms → Import → PIN. The `handleStep1Next` handler was renamed to `handleStep2Next` and its `goToStep` target updated to `3` (Terms). `goToStep(2)` from SignInStep now navigates to Setup. Total step count unchanged (6).
+- **Auto-download PDF after transaction (`app/add-transaction.tsx`):** After a successful `addTransaction` or `updateTransaction`, the app now generates and opens the party's full ledger statement PDF via `generateAndSharePdf`. Fails silently if PDF generation errors (the entry is already saved). On Android, the PDF opens directly in the system viewer via `Linking.openURL()` after being copied to the app's documents directory.
+- **PDF/DOCX import verified:** Backend already had a complete `/api/import/parse` endpoint using `pdfplumber` (PDF) and `python-docx` (DOCX) with regex-based ledger text parsing. The reorder makes Google sign-in available before the Import step, so the Supabase JWT required by `get_authenticated_user` is present. No backend changes needed.
+
 ### 2026-09-04 — UPI deep link in WhatsApp reminders
 **Feature:** One-tap UPI payment from WhatsApp reminder messages
 **Status:** Completed
