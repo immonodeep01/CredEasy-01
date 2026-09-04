@@ -8,6 +8,18 @@ httpx>=0.27.0
 openai>=1.54.0
 groq>=0.11.0
 edge-tts>=6.1.0
+pdfplumber>=0.11.0
+python-docx>=1.1.0
+
+# OpenTelemetry tracing — set PHOENIX_ENDPOINT or OTEL_EXPORTER_OTLP_ENDPOINT
+# to enable. All packages are optional; server.py logs a warning and continues
+# if any are missing. Set OTEL_SDK_DISABLED=true to disable.
+opentelemetry-api>=1.20.0
+opentelemetry-sdk>=1.20.0
+opentelemetry-exporter-otlp-proto-http>=1.20.0
+opentelemetry-instrumentation-fastapi>=0.40b0
+opentelemetry-instrumentation-openai-v2>=2.0b0
+# Optional: arize-phoenix>=6.0.0  (run `phoenix server` for the local UI)
 
 # Tests / tooling
 pytest>=8.0.0
