@@ -77,5 +77,9 @@
       "Bash(dir \"C:\\\\Users\\\\Monodeep Deb\\\\Desktop\\\\CredEasy-Emergent\\\\CredEasy-Emergent-main\\\\frontend\\\\android\\\\gradle\\\\wrapper\")",
       "Bash(findstr /i \"gradle\")"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "firecrawl"
+  ],
+  "enableAllProjectMcpServers": true
 }

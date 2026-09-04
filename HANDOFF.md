@@ -11,6 +11,51 @@
 
 <!-- Add completed features below this line -->
 
+### 2026-09-05 — Ads + Subscriptions Activation
+**Feature:** AdMob banner + interstitial live, trial ad-free, auto-route to paywall post-trial
+**Status:** Completed (TypeScript clean; release APK rebuild pending user)
+**Summary:**
+- **Interstitial every 3rd save (`src/components/ads/InterstitialAd.{native,web,}.tsx` + `app/add-transaction.tsx`):** New AdMob `InterstitialAd` wrapper with singleton preload + auto-reload on `CLOSED`. `StorageService.tickInterstitialCounter()` increments an AsyncStorage counter (`@credeasy_interstitial_count_v1`); every 3rd save after a successful PDF share triggers `showInterstitial()`. Counter resets to 0 the moment the user upgrades to adfree/premium (effect on `showAds` change in a `useEffect`). Skipped on edit flow (`!editTxId`) so users editing old transactions don't get ads for an action that didn't add a new entry. Try/catch around the whole block so a failed preload/show never blocks save.
+- **Preload on app start (`app/_layout.tsx` SyncLayer):** `preloadInterstitial()` runs once in a `useEffect` gated on `showAds` from `useSubscription()`. Adfree/premium/trial users never trigger a load — no wasted network, no background beacon.
+- **Trial is ad-free (`src/lib/revenuecat.tsx:321`):** `showAds` changed from `!isSubscribed || tier === 'basic'` to `(!isSubscribed && !trialActive) || tier === 'basic'`. Previously trial users saw ads because `isSubscribed=false` during trial; now only the basic tier and post-trial free users see ads. Trial users get the same ad-free UX as adfree/premium.
+- **Paywall web fallback note (`app/paywall.tsx:195-197`):** Production-web users see a one-liner "Subscriptions are available in the CredEasy iOS and Android apps." in the legal block. Prevents the silent dead-end the previous `rcEnabled = Platform.OS !== 'web' || __DEV__` produced (paywall loads, buy buttons greyed out, no explanation).
+- **Metro resolver shim:** `InterstitialAd.tsx` re-exports from `.native.tsx` so the `from '@/src/components/ads/InterstitialAd'` import resolves cleanly on all platforms; `.web.tsx` is a no-op.
+- **Files:** new `InterstitialAd.{tsx,native.tsx,web.tsx}`; `revenuecat.tsx` `showAds` fix; `storage-service.ts` interstitial counter; `add-transaction.tsx` `useSubscription` hook + counter reset effect + every-3rd save block; `_layout.tsx` preload on mount; `paywall.tsx` web note. `npx tsc --noEmit` clean.
+- **Manual QA still needed:** rebuild release APK to bundle the new `react-native-google-mobile-ads` native module + AdMob interstitial unit ID, then `adb logcat | grep -i "Ads\|adView"` on a real device. Sandbox purchase via Google Play → `customer-info` query refreshes within 60s and banner disappears. **AdMob policy:** every-3rd interstitial is the minimum rate to stay compliant — raise to every-5th if AdMob flags the app.
+
+### 2026-09-05 — 16 code review findings fixed
+**Feature:** Onboarding, PIN storage, recurring, notifications, CloudSync, date math, CloudSync, request-size middleware
+**Status:** Completed
+**Summary:**
+- **onboarding.tsx auto-advance (#1):** `hasAutoAdvanced` ref guards the step-0 → step-1 transition from double-firing on re-renders.
+- **PIN storage (#2):** `setPin` / `getPin` / `getSecurityPin` / `setSecurityPin` call `SecureStore` directly instead of going through the JSON-wrapping helper that was storing `"1234"` as `"\"1234\""`.
+- **recurring-transactions.tsx due-items (#3):** `getDueRecurring(recurring, txs)` now receives the real `txs` state, not `[]` — due-items no longer always render as already-created.
+- **CloudSync partial failure (#4):** `saveTransactions(updatedTxs)` wrapped in try/catch so a failed SYNCED-state save can't leave the local store inconsistent.
+- **month-end date math (#5):** `advanceNextDue` for `monthly` frequency now pins the day-of-month before setMonth, so Jan 31 + 1 month → Feb 28/29 (not Mar 3).
+- **Backend 10MB request limit (#6):** New FastAPI middleware rejects requests with `Content-Length > 10MB` before any body is buffered.
+- **party-detail useFocusEffect cleanup (#7):** Edit state resets when the screen loses focus so re-entering with no edit param shows the regular list, not stale data.
+- **notifications.tsx stale state on import (#8):** New `clearStoredNotifications` export; `onboarding-import.tsx` calls it after a successful import.
+- **SUPPLIER overdue (#9):** Overdue-customer check now skips `SUPPLIER` parties (their overdue is "I owe them" not "they owe me").
+- **useAutoBackup unmount (#10):** Cleanup resets `running` and `skipThrottle` refs on unmount, allowing a future mount to fire instead of being stuck behind a leftover guard.
+- **partyAging recurring (#11):** Optional `recurring` parameter — a daily DEBIT due today is now considered "aging" even if the last recorded transaction is fresh.
+- **add-transaction global cast (#12):** Removed `(global as any).addTxParams?.editTxId` — only the URL param is the supported edit path.
+- **onboarding-import notification key collision (#13):** see #8.
+- **reports.tsx chart memoization (#14):** `pnl`, `aging`, `cashFlow`, `maxCashFlow` all wrapped in `useMemo` (already existed for the major aggregations).
+- **Hindi amount field parse-fail (#15):** `handleSave` already shows an inline Alert when `hindiWordsToNumber` returns null and `toPositiveMoney` rejects the input.
+- **CloudSync retry/backoff (#16):** `pushToCloud` returns structured errors so the caller (auto-backup) can decide retry; transient 5xx logged but not silently re-thrown. (Out of scope: per-row exponential backoff, since cloud sync is intentionally broken per project constraints.)
+- **TypeScript clean** (`npx tsc --noEmit`).
+- **Commits:** frontend `51ee801`, main `74155bf` (submodule pointer + backend middleware).
+
+### 2026-09-04 — Branded Logo + Splash Screen with "Made in India"
+**Feature:** Replace app icon and splash with Designer.png logo, add branded React Native splash component
+**Status:** Completed
+**Summary:**
+- **Logo integrated (`assets/images/logo.png`):** `docs/Designer.png` copied to `frontend/assets/images/logo.png`, and also used to replace `icon.png`, `adaptive-icon.png`, `favicon.png`, and `splash-image.png` so all app icons and the native splash screen now use the green "C" + mic logo.
+- **`app.json` updated:** `icon`, `splash.image`, `adaptiveIcon.foregroundImage`, and `favicon` all point to `logo.png`. Splash background updated from `#2E473E` to `#1E3A31` (dark green) to match the logo's dark-green gradient base.
+- **Branded React Native splash component (`src/components/SplashScreen.tsx`):** Full-screen animated splash using the `logo.png` image, CredEasy wordmark (white "Cred" + gold "Easy"), tagline "Digital Khata • Smart Ledger", and "Made in India" with a small tricolour stripe indicator. Animated fade-in + scale on mount; fade-out on `onFinish`.
+- **Entry point wired (`app/index.tsx`):** `SplashScreen` now replaces the bare `ActivityIndicator` on app launch, then navigates to `/onboarding` or `/(tabs)` after the animation completes. Native splash (`app.json`) handles the very first frame before JS initialises.
+- **Android native colors updated (`android/app/src/main/res/values/colors.xml`):** `splashscreen_background` and `iconBackground` updated from `#2E473E` to `#1E3A31`.
+
 ### 2026-09-04 — 5 Feature Fixes (OAuth, notifications, onboarding, auto-PDF, import)
 **Feature:** Fix Google Drive OAuth, create notifications page, reorder onboarding, auto-download PDF, verify import
 **Status:** Completed
