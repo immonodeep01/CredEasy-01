@@ -958,12 +958,12 @@ def parse_date(date_str: str) -> Optional[str]:
 
 
 def parse_ledger_text(text: str) -> dict:
-    """Parse extracted text to find parties and transactions.
+    """Parse extracted text to find parties, transactions, and opening balances.
 
     Looks for common Indian ledger patterns:
     - Names with phone numbers
-    - Amounts with Gave/Got or Dr/Cr indicators
-    - Date patterns
+    - Per-line transactions: date + amount + Gave/Got
+    - Summary lines: Total Due / Balance / Net that set openingBalance
     """
     parties = {}  # name -> {phone, type, openingBalance}
     transactions = []
@@ -980,10 +980,10 @@ def parse_ledger_text(text: str) -> dict:
     lines = text.split('\n')
     current_party = None
 
-    # Pattern 1: Phone numbers (Indian format)
-    phone_pattern = re.compile(r'(?:\+91[\s-]?)?(\d{10})\b')
+    # Pattern 1: Phone numbers (Indian 10-digit)
+    phone_pattern = re.compile(r'(?:\+91[\s\-]?)?(\d{10})\b')
 
-    # Pattern 2: Amounts (with currency or just numbers)
+    # Pattern 2: Amounts (currency optional)
     amount_pattern = re.compile(r'(?:₹|Rs\.?|INR)?\s*([\d,]+(?:\.\d{1,2})?)')
 
     # Pattern 3: Dates
@@ -998,15 +998,45 @@ def parse_ledger_text(text: str) -> dict:
 
     # Pattern 5: Name + Phone on same line
     name_phone_pattern = re.compile(
-        r'([A-Z][a-zA-Z\s]{2,40})\s*[\-:|\s]+\s*(\+?91[\s-]?)?(\d{10})'
+        r'([A-Z][a-zA-Z\s]{2,40})\s*[\-:|\s]+\s*(\+?91[\s\-]?)?(\d{10})'
     )
+
+    # Pattern 6: Balance / Total Due summary lines (sets openingBalance for current party)
+    # Matches patterns like "Total: ₹500", "Total Due: ₹500", "Balance: ₹500",
+    # "Net: ₹500", "Due: ₹500", "₹500" alone on a line near the party header
+    balance_summary_pattern = re.compile(
+        r'(?:total|due|balance|net|pending|बकाया|₹|Rs\.?)?[\s:]*'
+        r'(?:₹|Rs\.?)?\s*([\d,]+(?:\.\d{1,2})?)',
+        re.IGNORECASE
+    )
+    balance_indicator_pattern = re.compile(
+        r'\b(total\s*(?:due|amount)?|balance|net\s*(?:due|amount)?|pending|due|'
+        r'बकाया|कुल\s*देय|कुल|शेष)\b',
+        re.IGNORECASE
+    )
+
+    def _is_balance_line(line: str) -> bool:
+        """Return True if this line looks like a balance/total summary."""
+        stripped = line.strip()
+        if not stripped:
+            return False
+        # Must contain an amount
+        if not amount_pattern.search(stripped):
+            return False
+        # Must contain a balance indicator keyword
+        if balance_indicator_pattern.search(stripped):
+            return True
+        # Also catch lines that are just "₹500" or "Rs 500" alone (short lines)
+        if len(stripped) < 20 and re.match(r'^(?:₹|Rs\.?|INR)\s*[\d,]+(?:\.\d+)?$', stripped, re.IGNORECASE):
+            return True
+        return False
 
     for line in lines:
         line = line.strip()
         if not line or len(line) < 3:
             continue
 
-        # Try to find name + phone
+        # ── 1. Name + Phone (party header) ───────────────────────────────────
         name_phone_match = name_phone_pattern.search(line)
         if name_phone_match:
             name = name_phone_match.group(1).strip()
@@ -1021,21 +1051,33 @@ def parse_ledger_text(text: str) -> dict:
                 current_party = name
                 continue
 
-        # Try to find just a phone number
+        # ── 2. Just a phone number (associate with current party) ─────────────
         phone_match = phone_pattern.search(line)
         if phone_match and current_party:
             phone = normalize_phone(phone_match.group(1))
             if parties.get(current_party, {}).get("phone") in (None, ""):
                 parties[current_party]["phone"] = phone
 
-        # Try to find transaction: amount + type
+        # ── 3. Balance / Total Due line (sets openingBalance) ────────────────
+        if current_party and _is_balance_line(line):
+            # Extract the largest amount on this line as the balance
+            amounts_in_line = amount_pattern.findall(line)
+            if amounts_in_line:
+                # Take the last/largest amount — total lines usually have one, but
+                # fall back to the last one if there are multiple
+                balance_amount = max(parse_amount(a) or 0 for a in amounts_in_line)
+                if balance_amount > 0 and parties[current_party]["openingBalance"] == 0:
+                    parties[current_party]["openingBalance"] = balance_amount
+
+        # ── 4. Per-line transaction: date + amount + Gave/Got ────────────────
         amount_match = amount_pattern.search(line)
         if amount_match:
             amount = parse_amount(amount_match.group(1))
-            if amount:
+            if amount and amount > 0:
                 is_gave = bool(gave_pattern.search(line))
                 is_got = bool(got_pattern.search(line))
 
+                # Only treat as transaction if it has a gave/got indicator
                 if is_gave or is_got:
                     # Find date in this line
                     date_iso = None
@@ -1045,13 +1087,13 @@ def parse_ledger_text(text: str) -> dict:
                             date_iso = parse_date(date_match.group(1))
                             break
 
-                    # Use current party or try to extract from line
                     party_name = current_party
                     if not party_name:
-                        # Try to find a name (first word that looks like a name)
                         words = line.split()
                         if words and words[0][0].isupper() and len(words[0]) > 2:
-                            party_name = words[0]
+                            # Skip lines that are just amounts (no meaningful name)
+                            if not re.match(r'^[\d₹\s,.:\-]+$', line):
+                                party_name = words[0]
 
                     if party_name:
                         transactions.append({
