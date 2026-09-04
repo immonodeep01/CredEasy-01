@@ -45,6 +45,12 @@ A mobile-first business ledger app (React Native + Expo) with Supabase backend, 
 - `rcEnabled = Platform.OS !== 'web' || __DEV__` makes production-web paywall impassable
 - Backend 401s on all authenticated calls (voice assistant included)
 
+### Android Build Fix (Resolved 2026-09-04, updated 2026-09-04 v2)
+Local `./gradlew assembleDebug` / `assembleRelease` now works on Windows + NDK 27. The fix lives in two places:
+1. **`patchCxxSharedLib` Gradle task** (`android/app/build.gradle`, runs before every native build via `preBuild.dependsOn patchCxxSharedLib`): walks every `CMakeLists.txt` under `react-native-screens`, `react-native-worklets`, `react-native-reanimated`, `react-native-gesture-handler`, `react-native-safe-area-context`, `react-native-webview`, `react-native-purchases-ui`, `react-native-google-mobile-ads`, `expo-modules-core`, and `@react-native-async-storage/async-storage`. For each file: (a) inserts `find_library(CPP_SHARED_LIB c++_shared)` before the first `add_library(...)` if missing; (b) walks every `target_link_libraries(...)` call (handles both single-line `target_link_libraries(foo bar)` and multi-line `target_link_libraries(\n  foo\n)` forms via balanced-paren matching) and appends `${CPP_SHARED_LIB}` to any block that doesn't already have it. The patch is idempotent — re-running on an already-patched file is a no-op. Survives `gradle clean`, `npx expo prebuild`, and `yarn install`.
+2. **Standalone Node.js patcher** (`frontend/scripts/patch-all-cmake.js`): same logic in plain JS for one-off pre-patching without running gradle. Useful if you need to inspect or fix files before a long build, or to understand which blocks were patched.
+**Known cosmetic warning:** `CMAKE_OBJECT_PATH_MAX=250` warning on Windows for paths with spaces — non-fatal, build proceeds. APKs at `frontend/android/app/build/outputs/apk/debug/` and `.../release/`.
+
 ## File Locations
 
 ### Frontend
