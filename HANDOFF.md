@@ -11,6 +11,21 @@
 
 <!-- Add completed features below this line -->
 
+### 2026-09-06 — Web SPA (OkCredit-style merchant web app)
+**Feature:** Vanilla ES-module SPA at `/app/` with Google OAuth, localStorage store, and live cloud sync
+**Status:** Completed (deployed at https://credeasy-app.onrender.com/)
+**Summary:**
+- **`app/` static SPA:** OkCredit-style two-column login (carousel hero + Google button) and a 5-tab dashboard (Dashboard / Parties / Add Transaction / Reports / Settings). No build step — vanilla ES module + hash router.
+- **Auth:** Same Google OAuth flow as the mobile app via Supabase JS UMD. `signInWithGoogle()` calls `supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo, skipBrowserRedirect: false } })`. Supabase handles the code exchange on return. `onAuthStateChange` stores the session in `localStorage.credeasy.session`.
+- **Store:** localStorage keys `credeasy.{session,parties,transactions,profile}` — mirrors the mobile AsyncStorage model. Balance computed client-side from opening + Σ DEBIT − Σ CREDIT.
+- **Cloud sync:** On auth, `loadFromCloud()` pulls from `/api/parties` and `/api/transactions`; on every save, `syncToCloud()` posts to the same endpoints. Sync badge in the top bar shows Syncing…/Synced/Offline.
+- **Backend CRUD (`backend/server.py:1293-1450`):** 4 endpoints — GET/POST `/api/parties` and `/api/transactions`. Uses `SUPABASE_SERVICE_ROLE_KEY` to bypass RLS but writes `user_id` from the validated JWT, so data isolation is preserved. `Prefer: resolution=merge-duplicates` for upsert. CORS allows `https://credeasy-app.onrender.com`.
+- **Mobile UUID fix (`frontend/src/utils/storage/storage-service.ts`):** `newId()` now returns `crypto.randomUUID()` instead of a time-stamped string. Phase 1 of the same workstream fixed Google OAuth in `auth.tsx` (the `data.url` was never being opened).
+- **Schema note (`docs/supabase-migration.sql`):** v3 note documents the UUID switch; `text primary key` already accepts UUIDs since v1, no migration needed.
+- **Deploys:** Backend `https://credeasy-01.onrender.com` (existing service, redeployed). Static site `https://credeasy-app.onrender.com` (new service, `publishPath: app`). Files moved from `website/app/` to `app/` at repo root — Render's static-site `publishPath` resolves relative to repo root, so `app/` had to be at the top level. The marketing site link `href="app/"` in `website/index.html` still works (resolves relative to `website/`).
+- **Env wiring:** `app/env.example.js` shows the 4 runtime vars (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `BACKEND_URL`, `WEB_URL`). On deploy, copy → `env.js` and fill in. App gracefully degrades to a disabled button if not configured.
+- **Verification:** `GET /` returns the login page; `GET /app.js` and `GET /styles.css` serve the bundle; `GET /api/parties` returns 401 (auth required — RLS chain works). Manual test: open `https://credeasy-app.onrender.com/`, click "Continue with Google", complete consent, dashboard loads.
+
 ### 2026-09-05 — Ads + Subscriptions Activation
 **Feature:** AdMob banner + interstitial live, trial ad-free, auto-route to paywall post-trial
 **Status:** Completed (TypeScript clean; release APK rebuilt)
