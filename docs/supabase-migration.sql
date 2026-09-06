@@ -17,6 +17,13 @@
 --   3. business_profiles gained the DELETE policy it was missing, so a user can
 --      actually remove their own profile.
 --
+-- v3 note (2026-09-06): The mobile app now generates real UUIDs via
+-- crypto.randomUUID() instead of the time-stamped strings above. The PK columns
+-- remain TEXT so Postgres accepts the new format without a migration. If you
+-- prefer strict UUID enforcement, change `text primary key` to
+-- `uuid primary key default gen_random_uuid()` — but this requires ALTERing
+-- existing rows (they contain legacy string IDs) so is not done automatically.
+--
 -- Safe to run on a fresh project. It DROPS the four tables first, so if you
 -- already have rows in them, back them up before running:
 --   select count(*) from parties;   -- etc.

@@ -1290,6 +1290,163 @@ async def sms_parse(req: SmsParseRequest, user: dict = Depends(get_authenticated
             parser="regex",
         )
 
+# ---------------------------------------------------------------------------
+# Ledger CRUD — parties and transactions
+# ---------------------------------------------------------------------------
+# Uses the service-role key so the server can write rows directly without RLS.
+# The user_id from the validated JWT is always written into each row, so data
+# from one user is never visible to another. The frontend generates UUIDs for
+# all ids so this matches the supabase-migration.sql schema (UUID PKs).
+SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
+
+class PartyIn(BaseModel):
+    id: str
+    name: str
+    phone: Optional[str] = ""
+    type: str = Field(..., pattern=r"^(CUSTOMER|SUPPLIER)$")
+    opening_balance: float = 0
+    created_at: Optional[str] = ""
+
+
+class PartyOut(BaseModel):
+    id: str
+    name: str
+    phone: Optional[str] = ""
+    type: str
+    opening_balance: float
+    created_at: str
+
+
+class TxIn(BaseModel):
+    id: str
+    party_id: str
+    amount: float
+    type: str = Field(..., pattern=r"^(DEBIT|CREDIT)$")
+    note: Optional[str] = ""
+    date: str
+    sync_status: Optional[str] = "SYNCED"
+
+
+class TxOut(BaseModel):
+    id: str
+    party_id: str
+    amount: float
+    type: str
+    note: Optional[str] = ""
+    date: str
+    sync_status: str
+    created_at: Optional[str] = ""
+
+
+def _supabase_headers(api_key: str) -> dict:
+    return {"Authorization": f"Bearer {api_key}", "apikey": api_key, "Content-Type": "application/json"}
+
+
+@api_router.get("/parties", response_model=dict)
+async def list_parties(user: dict = Depends(get_authenticated_user)):
+    """Return all parties for the authenticated user, newest first."""
+    if not SERVICE_ROLE_KEY:
+        return {"parties": []}
+    try:
+        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/parties",
+                headers=_supabase_headers(SERVICE_ROLE_KEY),
+                params={"user_id": f"eq.{user['user_id']}", "select": "*", "order": "created_at.desc"},
+            )
+        if resp.status_code != 200:
+            logger.warning(f"list_parties: Supabase returned {resp.status_code}")
+            return {"parties": []}
+        return {"parties": resp.json()}
+    except Exception:
+        logger.exception("list_parties failed")
+        return {"parties": []}
+
+
+@api_router.post("/parties", response_model=dict)
+async def upsert_party(party: PartyIn, user: dict = Depends(get_authenticated_user)):
+    """Upsert a party. The frontend always sends the full object on every save."""
+    if not SERVICE_ROLE_KEY:
+        return {"ok": False, "error": "backend not configured"}
+    row = {
+        "id": party.id,
+        "user_id": user["user_id"],
+        "name": party.name,
+        "phone": party.phone or "",
+        "type": party.type,
+        "opening_balance": party.opening_balance,
+        "created_at": party.created_at or datetime.utcnow().isoformat(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                f"{SUPABASE_URL}/rest/v1/parties",
+                headers={**_supabase_headers(SERVICE_ROLE_KEY), "Prefer": "resolution=merge-duplicates"},
+                json=row,
+            )
+        if resp.status_code not in (200, 201):
+            logger.warning(f"upsert_party: Supabase returned {resp.status_code}: {resp.text}")
+            return {"ok": False, "error": "could not save party"}
+        return {"ok": True, "party": party.model_dump()}
+    except Exception:
+        logger.exception("upsert_party failed")
+        return {"ok": False, "error": "backend error"}
+
+
+@api_router.get("/transactions", response_model=dict)
+async def list_transactions(user: dict = Depends(get_authenticated_user)):
+    """Return all transactions for the authenticated user, newest first."""
+    if not SERVICE_ROLE_KEY:
+        return {"transactions": []}
+    try:
+        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
+            resp = await client.get(
+                f"{SUPABASE_URL}/rest/v1/transactions",
+                headers=_supabase_headers(SERVICE_ROLE_KEY),
+                params={"user_id": f"eq.{user['user_id']}", "select": "*", "order": "created_at.desc"},
+            )
+        if resp.status_code != 200:
+            logger.warning(f"list_transactions: Supabase returned {resp.status_code}")
+            return {"transactions": []}
+        return {"transactions": resp.json()}
+    except Exception:
+        logger.exception("list_transactions failed")
+        return {"transactions": []}
+
+
+@api_router.post("/transactions", response_model=dict)
+async def append_transaction(tx: TxIn, user: dict = Depends(get_authenticated_user)):
+    """Append a transaction. Called after every local save."""
+    if not SERVICE_ROLE_KEY:
+        return {"ok": False, "error": "backend not configured"}
+    row = {
+        "id": tx.id,
+        "user_id": user["user_id"],
+        "party_id": tx.party_id,
+        "amount": tx.amount,
+        "type": tx.type,
+        "note": tx.note or "",
+        "date": tx.date,
+        "sync_status": tx.sync_status or "SYNCED",
+        "created_at": datetime.utcnow().isoformat(),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
+            resp = await client.post(
+                f"{SUPABASE_URL}/rest/v1/transactions",
+                headers={**_supabase_headers(SERVICE_ROLE_KEY), "Prefer": "resolution=merge-duplicates"},
+                json=row,
+            )
+        if resp.status_code not in (200, 201):
+            logger.warning(f"append_transaction: Supabase returned {resp.status_code}: {resp.text}")
+            return {"ok": False, "error": "could not save transaction"}
+        return {"ok": True, "transaction": tx.model_dump()}
+    except Exception:
+        logger.exception("append_transaction failed")
+        return {"ok": False, "error": "backend error"}
+
+
 # Include the router in the main app
 app.include_router(api_router)
 
@@ -1300,6 +1457,7 @@ DEFAULT_ALLOWED_ORIGINS = [
     "http://127.0.0.1:8081",
     "exp://localhost:8081",
     "exp://127.0.0.1:8081",
+    "https://credeasy-app.onrender.com",
 ]
 
 allowed_origins = [

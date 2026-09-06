@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>CredEasy — Digital Khata</title>
+  <meta name="description" content="Your digital bahi khata. Track udhar, send reminders, get paid faster."/>
+  <meta name="theme-color" content="#2FA87A"/>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232FA87A'/%3E%3Ctext x='50' y='65' font-size='52' font-weight='800' text-anchor='middle' fill='white' font-family='sans-serif'%3E₹%3C/text%3E%3C/svg%3E"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+  <link rel="stylesheet" href="styles.css"/>
+  <!-- Supabase JS client for browser auth -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd.js"></script>
+</head>
+<body>
+
+<!-- ── LOGIN PAGE ──────────────────────────────────────────────── -->
+<div id="login-page">
+  <div class="login-layout">
+
+    <!-- Left: Carousel hero -->
+    <div class="login-hero">
+      <div class="carousel" id="carousel" role="region" aria-label="Feature carousel">
+        <div class="carousel-slides" id="carousel-slides">
+          <div class="carousel-slide active" id="slide-0">
+            <div class="slide-icon">📒</div>
+            <h2>Digital Bahi Khata</h2>
+            <p>Get rid of your old register. Opt for a new digital and forever ledger book.</p>
+          </div>
+          <div class="carousel-slide" id="slide-1">
+            <div class="slide-icon">💬</div>
+            <h2>Track on WhatsApp</h2>
+            <p>Share your ledger link with customers. They can see their balance without downloading anything.</p>
+          </div>
+          <div class="carousel-slide" id="slide-2">
+            <div class="slide-icon">🎤</div>
+            <h2>Voice Khata</h2>
+            <p>Press the mic and say it. "Ramesh ko 500 rupaye diye" — recorded in seconds.</p>
+          </div>
+          <div class="carousel-slide" id="slide-3">
+            <div class="slide-icon">💸</div>
+            <h2>Get Paid Faster</h2>
+            <p>Send a one-tap WhatsApp reminder with UPI link. Money lands, ledger updates itself.</p>
+          </div>
+        </div>
+        <div class="carousel-dots" id="carousel-dots" role="tablist" aria-label="Slide indicators">
+          <button class="dot active" data-slide="0" role="tab" aria-selected="true" aria-label="Slide 1"></button>
+          <button class="dot" data-slide="1" role="tab" aria-selected="false" aria-label="Slide 2"></button>
+          <button class="dot" data-slide="2" role="tab" aria-selected="false" aria-label="Slide 3"></button>
+          <button class="dot" data-slide="3" role="tab" aria-selected="false" aria-label="Slide 4"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right: Login form -->
+    <div class="login-form-panel">
+      <div class="login-form-inner">
+
+        <!-- Brand -->
+        <div class="login-brand">
+          <span class="brand-mark">₹</span>
+          <span class="brand-name">CredEasy</span>
+        </div>
+
+        <div class="namaste-wrap">
+          <div class="namaste-icon">🙏</div>
+          <div class="login-title">Welcome to CredEasy</div>
+          <p class="login-sub">Sign in to access your digital bahi khata</p>
+        </div>
+
+        <!-- Error message -->
+        <div class="alert alert-error" id="login-error" role="alert" hidden></div>
+
+        <!-- Google OAuth button -->
+        <button class="btn-google" id="btn-google" type="button">
+          <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg">
+            <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z" fill="#4285F4"/>
+            <path d="M9 18c2.43 0 4.467-.806 5.956-2.184l-2.908-2.258c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332C2.438 15.983 5.482 18 9 18z" fill="#34A853"/>
+            <path d="M3.964 10.707c-.18-.54-.282-1.117-.282-1.707s.102-1.167.282-1.707V4.961H.957C.347 6.173 0 7.548 0 9s.348 2.827.957 4.039l3.007-2.332z" fill="#FBBC05"/>
+            <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0 5.482 0 2.438 2.017.957 4.961L3.964 7.293C4.672 5.166 6.656 3.58 9 3.58z" fill="#EA4335"/>
+          </svg>
+          Continue with Google
+        </button>
+
+        <p class="login-terms">
+          By continuing, you agree to our
+          <a href="https://credeasy.app/terms" target="_blank" rel="noopener">Terms of service</a> and
+          <a href="https://credeasy.app/privacy" target="_blank" rel="noopener">Privacy Policy</a>.
+        </p>
+      </div>
+    </div>
+
+  </div><!-- /.login-layout -->
+</div><!-- /#login-page -->
+
+<!-- ── DASHBOARD PAGE ─────────────────────────────────────────── -->
+<div id="dashboard-page" hidden>
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/dashboard">
+        <span class="brand-mark">₹</span>
+        <span class="brand-name">CredEasy</span>
+      </a>
+      <div class="topbar-center">
+        <span class="shop-name" id="shop-name">My Shop</span>
+      </div>
+      <div class="topbar-right">
+        <div class="sync-badge" id="sync-badge">
+          <span class="sync-dot"></span>
+          <span id="sync-label">Synced</span>
+        </div>
+        <button class="btn-icon" id="btn-signout" title="Sign out" aria-label="Sign out">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+            <polyline points="16 17 21 12 16 7"/>
+            <line x1="21" y1="12" x2="9" y2="12"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Tab nav -->
+  <nav class="tab-nav" role="navigation" aria-label="Main sections">
+    <button class="tab active" data-tab="dashboard" role="tab" aria-selected="true">Dashboard</button>
+    <button class="tab" data-tab="parties" role="tab" aria-selected="false">Parties</button>
+    <button class="tab" data-tab="add" role="tab" aria-selected="false">Add Transaction</button>
+    <button class="tab" data-tab="reports" role="tab" aria-selected="false">Reports</button>
+    <button class="tab" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+  </nav>
+
+  <!-- Content area -->
+  <main class="dashboard-content" id="dashboard-content">
+
+    <!-- Dashboard view -->
+    <div class="tab-content active" id="view-dashboard" role="tabpanel">
+      <div class="summary-cards">
+        <div class="summary-card green">
+          <div class="summary-label">You will get</div>
+          <div class="summary-amount" id="summary-get">₹0</div>
+          <div class="summary-count" id="summary-get-count">0 customers</div>
+        </div>
+        <div class="summary-card red">
+          <div class="summary-label">You will give</div>
+          <div class="summary-amount" id="summary-give">₹0</div>
+          <div class="summary-count" id="summary-give-count">0 suppliers</div>
+        </div>
+      </div>
+      <div class="section-head">
+        <h2>Recent Parties</h2>
+        <button class="btn-link" id="btn-view-all-parties">View all →</button>
+      </div>
+      <div id="recent-parties-list" class="party-list"></div>
+      <div class="empty-state" id="empty-dashboard" hidden>
+        <div class="empty-icon">📒</div>
+        <h3>No parties yet</h3>
+        <p>Add your first customer or supplier to get started.</p>
+        <button class="btn btn-primary" data-goto="add">Add Transaction</button>
+      </div>
+    </div>
+
+    <!-- Parties view -->
+    <div class="tab-content" id="view-parties" role="tabpanel">
+      <div class="view-header">
+        <h2>Parties</h2>
+        <button class="btn btn-primary btn-sm" id="btn-add-party">+ Add Party</button>
+      </div>
+      <div class="search-bar">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="search" id="party-search" placeholder="Search parties…" class="search-input"/>
+      </div>
+      <div id="all-parties-list" class="party-list"></div>
+      <div class="empty-state" id="empty-parties" hidden>
+        <div class="empty-icon">👥</div>
+        <h3>No parties yet</h3>
+        <p>Add your first customer or supplier.</p>
+      </div>
+    </div>
+
+    <!-- Add Transaction view -->
+    <div class="tab-content" id="view-add" role="tabpanel">
+      <h2>Add Transaction</h2>
+      <form class="tx-form" id="tx-form" novalidate>
+        <div class="form-group">
+          <label for="tx-party">Party *</label>
+          <select id="tx-party" required>
+            <option value="">Select party…</option>
+          </select>
+          <span class="field-hint">or <button type="button" class="btn-link" id="btn-new-party">+ Add new party</button></span>
+        </div>
+        <div class="form-group">
+          <label>Type *</label>
+          <div class="toggle-group">
+            <button type="button" class="toggle-btn active" data-type="GAVE" id="btn-gave">You Gave</button>
+            <button type="button" class="toggle-btn" data-type="GOT" id="btn-got">You Got</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="tx-amount">Amount (₹) *</label>
+          <input type="number" id="tx-amount" min="1" step="0.01" placeholder="0.00" required/>
+        </div>
+        <div class="form-group">
+          <label for="tx-note">Note</label>
+          <input type="text" id="tx-note" placeholder="e.g. 2 kilo aata"/>
+        </div>
+        <div class="form-group">
+          <label for="tx-date">Date</label>
+          <input type="date" id="tx-date"/>
+        </div>
+        <div class="alert alert-error" id="tx-error" role="alert" hidden></div>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary btn-full" id="btn-save-tx">Save Transaction</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Reports view -->
+    <div class="tab-content" id="view-reports" role="tabpanel">
+      <h2>Reports</h2>
+      <div class="report-cards">
+        <button class="report-card" id="btn-report-summary">
+          <span class="report-icon">📊</span>
+          <span class="report-label">Summary</span>
+        </button>
+        <button class="report-card" id="btn-report-customer">
+          <span class="report-icon">👤</span>
+          <span class="report-label">Customer Statement</span>
+        </button>
+        <button class="report-card" id="btn-report-pdf">
+          <span class="report-icon">🧾</span>
+          <span class="report-label">Export PDF</span>
+        </button>
+      </div>
+      <p class="coming-soon">More reports coming soon…</p>
+    </div>
+
+    <!-- Settings view -->
+    <div class="tab-content" id="view-settings" role="tabpanel">
+      <h2>Settings</h2>
+      <div class="settings-group">
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Business Name</div>
+            <div class="settings-value" id="settings-name">My Shop</div>
+          </div>
+          <button class="btn-link btn-sm" id="btn-edit-name">Edit</button>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Signed in as</div>
+            <div class="settings-value" id="settings-email">—</div>
+          </div>
+        </div>
+        <div class="settings-row">
+          <div>
+            <div class="settings-label">Cloud Sync</div>
+            <div class="settings-value">Enabled</div>
+          </div>
+          <span class="badge badge-green">Active</span>
+        </div>
+      </div>
+      <div class="settings-danger">
+        <button class="btn btn-danger" id="btn-signout-settings">Sign Out</button>
+      </div>
+    </div>
+
+  </main><!-- /#dashboard-content -->
+</div><!-- /#dashboard-page -->
+
+<!-- ── ADD PARTY MODAL ──────────────────────────────────────── -->
+<div id="party-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modal-title">
+  <div class="modal-backdrop" id="modal-backdrop"></div>
+  <div class="modal-panel">
+    <div class="modal-header">
+      <h3 id="modal-title">Add Party</h3>
+      <button class="btn-icon modal-close" id="modal-close" aria-label="Close">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+        </svg>
+      </button>
+    </div>
+    <form id="party-form" novalidate>
+      <div class="form-group">
+        <label for="party-name">Name *</label>
+        <input type="text" id="party-name" placeholder="Customer or supplier name" required/>
+      </div>
+      <div class="form-group">
+        <label for="party-phone">Phone</label>
+        <input type="tel" id="party-phone" placeholder="10-digit mobile number" maxlength="10"/>
+      </div>
+      <div class="form-group">
+        <label>Type *</label>
+        <div class="toggle-group">
+          <button type="button" class="toggle-btn active" data-party-type="CUSTOMER" id="btn-type-customer">Customer</button>
+          <button type="button" class="toggle-btn" data-party-type="SUPPLIER" id="btn-type-supplier">Supplier</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="party-balance">Opening Balance (₹)</label>
+        <input type="number" id="party-balance" placeholder="0.00" step="0.01" value="0"/>
+      </div>
+      <div class="alert alert-error" id="party-error" role="alert" hidden></div>
+      <div class="form-actions">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-party">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save Party</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── TOAST ───────────────────────────────────────────────── -->
+<div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+
+<!-- ── LOADING OVERLAY ──────────────────────────────────────── -->
+<div id="loading-overlay" class="loading-overlay" hidden>
+  <div class="spinner"></div>
+</div>
+
+<!-- ── FOOTER ───────────────────────────────────────────────── -->
+<footer class="login-footer">
+  <div class="login-footer-inner">
+    <span>© 2026 CredEasy. All rights reserved.</span>
+    <div class="footer-links">
+      <a href="https://credeasy.app/terms" target="_blank" rel="noopener">Terms</a>
+      <a href="https://credeasy.app/privacy" target="_blank" rel="noopener">Privacy</a>
+    </div>
+    <div class="footer-social">
+      <a href="https://facebook.com/credeasypage" target="_blank" rel="noopener" aria-label="Facebook">f</a>
+      <a href="https://twitter.com/_credeasy" target="_blank" rel="noopener" aria-label="Twitter">𝕏</a>
+      <a href="https://linkedin.com/company/credeasy" target="_blank" rel="noopener" aria-label="LinkedIn">in</a>
+      <a href="https://youtube.com/channel/UCcredeasy" target="_blank" rel="noopener" aria-label="YouTube">▶</a>
+    </div>
+  </div>
+</footer>
+
+<!-- Runtime config — rename env.example.js to env.js and fill in values before deploy -->
+<script src="env.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

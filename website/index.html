@@ -1,0 +1,1265 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>CredEasy — Digital Khata & Udhar Ledger for India's Shopkeepers</title>
+  <meta name="description" content="CredEasy is India's voice-first digital khata app. Track udhar, send WhatsApp reminders, and get paid 3x faster. Built for kirana stores, wholesalers, and small businesses. Free to start." />
+  <meta name="keywords" content="khata app, udhar bahi khata, khatabook, digital ledger, voice khata, India small business, kirana credit tracker" />
+  <meta property="og:title" content="CredEasy — Voice-First Digital Khata" />
+  <meta property="og:description" content="Speak your udhar, send WhatsApp reminders, get paid faster. India's fastest digital khata for shopkeepers." />
+  <meta property="og:type" content="website" />
+  <meta name="theme-color" content="#2FA87A" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%232FA87A'/%3E%3Ctext x='50' y='65' font-size='52' font-weight='800' text-anchor='middle' fill='white' font-family='sans-serif'%3E₹%3C/text%3E%3C/svg%3E" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Tokens ─────────────────────────────────────────── */
+    :root {
+      --primary: #2FA87A;
+      --primary-dark: #1F8860;
+      --primary-light: #E8F7F0;
+      --red: #C0392B;
+      --red-light: #FBEAE7;
+      --green: #2FA87A;
+      --green-light: #E8F7F0;
+      --text: #1A1A1A;
+      --text-secondary: #555555;
+      --text-muted: #777777;
+      --border: #E5E7EB;
+      --background: #FAFAFA;
+      --surface: #FFFFFF;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+      --shadow-lg: 0 12px 32px rgba(0,0,0,0.12);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --radius-xl: 24px;
+      --font: 'Plus Jakarta Sans', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --text: #F1F1F1;
+        --text-secondary: #B5B5B5;
+        --text-muted: #888888;
+        --border: #2A2A2A;
+        --background: #0E0E0E;
+        --surface: #181818;
+        --primary-light: #102A1F;
+        --red-light: #2A1410;
+        --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+        --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+        --shadow-lg: 0 12px 32px rgba(0,0,0,0.6);
+      }
+    }
+    :root[data-theme="dark"] {
+      --text: #F1F1F1;
+      --text-secondary: #B5B5B5;
+      --text-muted: #888888;
+      --border: #2A2A2A;
+      --background: #0E0E0E;
+      --surface: #181818;
+      --primary-light: #102A1F;
+      --red-light: #2A1410;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.4);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+      --shadow-lg: 0 12px 32px rgba(0,0,0,0.6);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+    body {
+      font-family: var(--font);
+      background: var(--background);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+    a { color: var(--primary); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    button { font-family: inherit; cursor: pointer; border: none; background: none; }
+    img { max-width: 100%; display: block; }
+
+    /* ── Nav ────────────────────────────────────────────── */
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: saturate(180%) blur(8px);
+    }
+    .nav-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 14px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 800;
+      font-size: 19px;
+      color: var(--text);
+    }
+    .brand:hover { text-decoration: none; }
+    .brand-mark {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      background: var(--primary);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 18px;
+    }
+    .nav-links { display: flex; gap: 4px; align-items: center; }
+    .nav-links a {
+      color: var(--text-secondary);
+      font-weight: 600;
+      font-size: 14px;
+      padding: 8px 12px;
+      border-radius: 8px;
+    }
+    .nav-links a:hover { background: var(--primary-light); color: var(--primary); text-decoration: none; }
+    .nav-cta {
+      background: var(--primary);
+      color: white !important;
+      padding: 9px 16px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .nav-cta:hover { background: var(--primary-dark); text-decoration: none; }
+    @media (max-width: 720px) {
+      .nav-links a:not(.nav-cta) { display: none; }
+    }
+
+    /* ── Layout helpers ────────────────────────────────── */
+    .container { max-width: 1200px; margin: 0 auto; padding: 0 20px; }
+    .eyebrow {
+      display: inline-block;
+      background: var(--primary-light);
+      color: var(--primary-dark);
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 6px 12px;
+      border-radius: 100px;
+      margin-bottom: 14px;
+    }
+    .section { padding: 80px 0; }
+    .section-tight { padding: 56px 0; }
+    .section-title {
+      font-size: clamp(28px, 4vw, 42px);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      margin-bottom: 14px;
+    }
+    .section-sub {
+      font-size: 17px;
+      color: var(--text-secondary);
+      max-width: 640px;
+      line-height: 1.6;
+    }
+    .section-head { text-align: center; margin-bottom: 48px; }
+    .section-head .section-sub { margin-left: auto; margin-right: auto; }
+
+    /* ── Hero ───────────────────────────────────────────── */
+    .hero {
+      position: relative;
+      padding: 60px 0 40px;
+      background:
+        radial-gradient(circle at 15% 0%, var(--primary-light) 0%, transparent 50%),
+        radial-gradient(circle at 90% 30%, var(--primary-light) 0%, transparent 45%),
+        var(--background);
+      overflow: hidden;
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 48px;
+      align-items: center;
+    }
+    @media (max-width: 880px) {
+      .hero-grid { grid-template-columns: 1fr; gap: 32px; }
+    }
+    .hero-title {
+      font-size: clamp(36px, 6vw, 56px);
+      font-weight: 800;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      margin-bottom: 18px;
+    }
+    .hero-title em { color: var(--primary); font-style: normal; }
+    .hero-sub {
+      font-size: 18px;
+      color: var(--text-secondary);
+      margin-bottom: 28px;
+      max-width: 520px;
+    }
+    .hero-ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 22px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 15px;
+      transition: transform 0.1s ease, box-shadow 0.15s ease;
+      cursor: pointer;
+    }
+    .btn:hover { transform: translateY(-1px); text-decoration: none; }
+    .btn-primary { background: var(--primary); color: white; box-shadow: var(--shadow-md); }
+    .btn-primary:hover { background: var(--primary-dark); }
+    .btn-secondary { background: var(--surface); color: var(--text); border: 1.5px solid var(--border); }
+    .btn-secondary:hover { border-color: var(--primary); color: var(--primary); }
+    .hero-stats {
+      display: flex;
+      gap: 28px;
+      flex-wrap: wrap;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .hero-stats b { color: var(--text); font-size: 20px; display: block; font-weight: 800; }
+
+    /* Phone mockup */
+    .phone-mockup {
+      position: relative;
+      max-width: 340px;
+      margin: 0 auto;
+    }
+    .phone-frame {
+      position: relative;
+      background: var(--surface);
+      border-radius: 36px;
+      padding: 14px;
+      box-shadow: var(--shadow-lg);
+      border: 1px solid var(--border);
+    }
+    .phone-screen {
+      background: var(--background);
+      border-radius: 26px;
+      padding: 22px 18px 26px;
+      min-height: 460px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .phone-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .phone-header b { color: var(--text); font-size: 14px; }
+    .phone-summary {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .phone-card {
+      background: var(--surface);
+      border-radius: 12px;
+      padding: 12px 10px;
+      border: 1px solid var(--border);
+      text-align: center;
+    }
+    .phone-card .label { font-size: 10px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+    .phone-card .amount { font-size: 16px; font-weight: 800; margin-top: 4px; }
+    .phone-card.green .amount { color: var(--green); }
+    .phone-card.red .amount { color: var(--red); }
+    .phone-list { display: flex; flex-direction: column; gap: 6px; flex: 1; }
+    .phone-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      background: var(--surface);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+    .phone-avatar {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      background: var(--primary-light);
+      color: var(--primary);
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 13px;
+    }
+    .phone-row .who { font-size: 12px; font-weight: 600; flex: 1; }
+    .phone-row .what { font-size: 10px; color: var(--text-muted); }
+    .phone-row .amt { font-size: 12px; font-weight: 700; }
+    .phone-row .amt.give { color: var(--red); }
+    .phone-row .amt.get { color: var(--green); }
+    .phone-fab {
+      align-self: center;
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-size: 26px;
+      box-shadow: 0 8px 20px rgba(47, 168, 122, 0.4);
+      margin-top: 4px;
+    }
+    /* Voice pulse rings around mic */
+    .mic-wrap {
+      position: relative;
+      display: grid;
+      place-items: center;
+    }
+    .mic-wrap::before, .mic-wrap::after {
+      content: '';
+      position: absolute;
+      width: 80px; height: 80px;
+      border-radius: 50%;
+      border: 2px solid var(--primary);
+      opacity: 0.4;
+      animation: pulse 2.4s ease-out infinite;
+    }
+    .mic-wrap::after { animation-delay: 1.2s; }
+    @keyframes pulse {
+      0% { transform: scale(0.6); opacity: 0.6; }
+      100% { transform: scale(1.4); opacity: 0; }
+    }
+
+    /* ── Logos / trust bar ─────────────────────────────── */
+    .trust-bar {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 24px 0;
+    }
+    .trust-bar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 32px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .trust-bar b { color: var(--text); }
+    .stars { color: #F4B400; letter-spacing: 1px; }
+
+    /* ── Features grid ─────────────────────────────────── */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+    }
+    .feature {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 24px;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+    }
+    .feature:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+      border-color: var(--primary);
+    }
+    .feature-icon {
+      width: 44px; height: 44px;
+      border-radius: 12px;
+      background: var(--primary-light);
+      color: var(--primary);
+      display: grid;
+      place-items: center;
+      font-size: 22px;
+      margin-bottom: 14px;
+    }
+    .feature h3 { font-size: 17px; font-weight: 800; margin-bottom: 6px; }
+    .feature p { font-size: 14px; color: var(--text-secondary); line-height: 1.55; }
+
+    /* ── Voice section ─────────────────────────────────── */
+    .voice-section {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: white;
+      border-radius: 24px;
+      padding: 56px 40px;
+      margin: 0 20px;
+      max-width: 1200px;
+      margin-left: auto;
+      margin-right: auto;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 40px;
+      align-items: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .voice-section::before {
+      content: '';
+      position: absolute;
+      width: 320px; height: 320px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.08);
+      top: -120px; right: -80px;
+    }
+    .voice-section::after {
+      content: '';
+      position: absolute;
+      width: 220px; height: 220px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.06);
+      bottom: -100px; left: -60px;
+    }
+    @media (max-width: 880px) {
+      .voice-section { grid-template-columns: 1fr; padding: 40px 24px; }
+    }
+    .voice-section h2 {
+      font-size: clamp(28px, 4vw, 40px);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.02em;
+      margin-bottom: 16px;
+    }
+    .voice-section p { font-size: 16px; opacity: 0.92; line-height: 1.6; margin-bottom: 24px; }
+    .voice-bullets { list-style: none; display: flex; flex-direction: column; gap: 12px; }
+    .voice-bullets li { display: flex; align-items: flex-start; gap: 10px; font-size: 15px; }
+    .voice-bullets .check {
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.2);
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      font-size: 12px;
+    }
+    .voice-visual {
+      position: relative;
+      z-index: 1;
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 20px;
+      padding: 28px;
+    }
+    .voice-bubble {
+      background: white;
+      color: var(--text);
+      border-radius: 16px;
+      padding: 16px 18px;
+      margin-bottom: 10px;
+      font-size: 14px;
+      box-shadow: var(--shadow-md);
+      max-width: 80%;
+    }
+    .voice-bubble .who { font-size: 11px; color: var(--text-muted); margin-bottom: 4px; font-weight: 600; }
+    .voice-bubble.user { background: var(--primary-dark); color: white; margin-left: auto; }
+
+    /* ── How it works ──────────────────────────────────── */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 24px;
+      position: relative;
+    }
+    .step {
+      position: relative;
+      padding: 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+    }
+    .step-num {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 15px;
+      margin-bottom: 14px;
+    }
+    .step h3 { font-size: 16px; font-weight: 800; margin-bottom: 6px; }
+    .step p { font-size: 14px; color: var(--text-secondary); }
+
+    /* ── Comparison table ──────────────────────────────── */
+    .compare-wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      overflow-x: auto;
+    }
+    .compare {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .compare th, .compare td {
+      padding: 14px 18px;
+      text-align: left;
+      font-size: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .compare th {
+      background: var(--background);
+      font-weight: 700;
+      font-size: 13px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .compare td.us { color: var(--primary); font-weight: 600; }
+    .compare tr:last-child td { border-bottom: none; }
+    .compare td:first-child { font-weight: 600; }
+
+    /* ── Pricing ───────────────────────────────────────── */
+    .pricing {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .plan {
+      background: var(--surface);
+      border: 1.5px solid var(--border);
+      border-radius: 20px;
+      padding: 28px 24px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+    .plan.featured {
+      border-color: var(--primary);
+      box-shadow: 0 12px 32px rgba(47, 168, 122, 0.15);
+    }
+    .plan.featured::before {
+      content: 'Most popular';
+      position: absolute;
+      top: -12px; left: 50%;
+      transform: translateX(-50%);
+      background: var(--primary);
+      color: white;
+      padding: 4px 12px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .plan-name { font-size: 18px; font-weight: 800; margin-bottom: 4px; }
+    .plan-blurb { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+    .plan-price {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      margin-bottom: 20px;
+    }
+    .plan-price .num { font-size: 36px; font-weight: 800; letter-spacing: -0.02em; }
+    .plan-price .per { color: var(--text-muted); font-size: 14px; font-weight: 600; }
+    .plan-features {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 24px;
+      flex: 1;
+    }
+    .plan-features li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 14px;
+      color: var(--text);
+    }
+    .plan-features .check {
+      color: var(--primary);
+      font-weight: 800;
+      flex-shrink: 0;
+    }
+    .plan-cta {
+      width: 100%;
+      padding: 13px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 14px;
+      text-align: center;
+    }
+    .plan-cta.primary { background: var(--primary); color: white; }
+    .plan-cta.primary:hover { background: var(--primary-dark); text-decoration: none; }
+    .plan-cta.secondary { background: var(--primary-light); color: var(--primary); }
+    .plan-cta.secondary:hover { background: var(--primary); color: white; text-decoration: none; }
+    .plan-features li.disabled { color: var(--text-muted); }
+    .plan-features li.disabled .check { color: var(--text-muted); }
+
+    /* ── FAQ ───────────────────────────────────────────── */
+    .faq { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+    .faq-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px 22px;
+      transition: border-color 0.15s ease;
+    }
+    .faq-item[open] { border-color: var(--primary); }
+    .faq-item summary {
+      list-style: none;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .faq-item summary::-webkit-details-marker { display: none; }
+    .faq-item summary::after {
+      content: '+';
+      font-size: 22px;
+      font-weight: 400;
+      color: var(--text-muted);
+      transition: transform 0.2s ease;
+    }
+    .faq-item[open] summary::after { content: '−'; color: var(--primary); }
+    .faq-item p {
+      margin-top: 12px;
+      color: var(--text-secondary);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    /* ── Final CTA ─────────────────────────────────────── */
+    .final-cta {
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: white;
+      text-align: center;
+      padding: 80px 20px;
+      border-radius: 24px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .final-cta h2 {
+      font-size: clamp(28px, 4.5vw, 44px);
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      margin-bottom: 14px;
+    }
+    .final-cta p { font-size: 17px; opacity: 0.92; margin-bottom: 28px; max-width: 560px; margin-left: auto; margin-right: auto; }
+    .final-cta .btn-secondary {
+      background: white;
+      color: var(--primary);
+      border: none;
+    }
+    .final-cta .btn-secondary:hover { background: var(--primary-light); }
+
+    /* ── Footer ────────────────────────────────────────── */
+    footer {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 48px 0 24px;
+      margin-top: 80px;
+    }
+    .footer-grid {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr 1fr 1fr;
+      gap: 32px;
+      margin-bottom: 32px;
+    }
+    @media (max-width: 720px) {
+      .footer-grid { grid-template-columns: 1fr 1fr; }
+    }
+    .footer-col h4 { font-size: 13px; font-weight: 800; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .footer-col a { display: block; color: var(--text-secondary); font-size: 14px; padding: 4px 0; }
+    .footer-col a:hover { color: var(--primary); text-decoration: none; }
+    .footer-tag { font-size: 13px; color: var(--text-muted); line-height: 1.6; max-width: 280px; margin-top: 8px; }
+    .footer-bottom {
+      border-top: 1px solid var(--border);
+      padding-top: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+    .footer-social { display: flex; gap: 8px; }
+    .footer-social a {
+      width: 32px; height: 32px;
+      border-radius: 8px;
+      background: var(--background);
+      display: grid;
+      place-items: center;
+      color: var(--text-secondary);
+    }
+    .footer-social a:hover { background: var(--primary-light); color: var(--primary); }
+
+    /* ── Theme toggle ──────────────────────────────────── */
+    .theme-toggle {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      z-index: 50;
+      width: 44px; height: 44px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-md);
+      display: grid;
+      place-items: center;
+      font-size: 18px;
+    }
+    .theme-toggle:hover { background: var(--primary-light); }
+  </style>
+</head>
+<body>
+  <!-- ── Nav ──────────────────────────────────────────────── -->
+  <nav>
+    <div class="nav-inner">
+      <a class="brand" href="#top">
+        <span class="brand-mark">₹</span>
+        CredEasy
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#voice">Voice</a>
+        <a href="#how">How it works</a>
+        <a href="#pricing">Pricing</a>
+        <a href="#faq">FAQ</a>
+        <a class="nav-cta" href="#download">Get the app</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Hero ─────────────────────────────────────────────── -->
+  <header class="hero" id="top">
+    <div class="container">
+      <div class="hero-grid">
+        <div>
+          <span class="eyebrow">Built for Bharat's merchants</span>
+          <h1 class="hero-title">Speak your <em>udhar</em>. Get paid <em>3× faster</em>.</h1>
+          <p class="hero-sub">
+            CredEasy is the voice-first digital khata for kirana stores, wholesalers, and small businesses. Press the mic, say what happened, and it's recorded in under two seconds — in your own language.
+          </p>
+          <div class="hero-ctas" id="download">
+            <a class="btn btn-primary" href="https://play.google.com/store" target="_blank" rel="noopener">
+              ▶ Get it on Google Play
+            </a>
+            <a class="btn btn-secondary" href="app/">Try on Web →</a>
+            <a class="btn btn-secondary" href="#how">
+              See how it works →
+            </a>
+          </div>
+          <div class="hero-stats">
+            <div><b>14 days</b>Free trial</div>
+            <div><b>₹29</b>Starts at</div>
+            <div><b>12+</b>Indian languages</div>
+            <div><b>Zero ads</b>for paid plans</div>
+          </div>
+        </div>
+
+        <div class="phone-mockup">
+          <div class="phone-frame">
+            <div class="phone-screen">
+              <div class="phone-header">
+                <div>
+                  <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;font-weight:600">Today</div>
+                  <b>Raj Traders</b>
+                </div>
+                <div style="font-size:18px">🔔</div>
+              </div>
+
+              <div class="phone-summary">
+                <div class="phone-card green">
+                  <div class="label">You will get</div>
+                  <div class="amount">₹72,450</div>
+                </div>
+                <div class="phone-card red">
+                  <div class="label">You will give</div>
+                  <div class="amount">₹18,900</div>
+                </div>
+              </div>
+
+              <div style="font-size:11px;font-weight:700;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.04em;padding:0 4px">Recent</div>
+
+              <div class="phone-list">
+                <div class="phone-row">
+                  <div class="phone-avatar">R</div>
+                  <div style="flex:1">
+                    <div class="who">Ramesh Kirana</div>
+                    <div class="what">2 hours ago</div>
+                  </div>
+                  <div class="amt give">− ₹584</div>
+                </div>
+                <div class="phone-row">
+                  <div class="phone-avatar" style="background:var(--red-light);color:var(--red)">S</div>
+                  <div style="flex:1">
+                    <div class="who">Suresh Traders</div>
+                    <div class="what">5 hours ago</div>
+                  </div>
+                  <div class="amt get">+ ₹1,200</div>
+                </div>
+                <div class="phone-row">
+                  <div class="phone-avatar">A</div>
+                  <div style="flex:1">
+                    <div class="who">Anita Stores</div>
+                    <div class="what">Yesterday</div>
+                  </div>
+                  <div class="amt give">− ₹3,450</div>
+                </div>
+              </div>
+
+              <div class="mic-wrap" style="margin-top:8px">
+                <div class="phone-fab">🎤</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Trust bar ────────────────────────────────────────── -->
+  <div class="trust-bar">
+    <div class="container trust-bar-inner">
+      <div><span class="stars">★★★★★</span> <b>4.6</b> on Google Play</div>
+      <div>· 50,000+ downloads</div>
+      <div>· <b>Offline-first</b></div>
+      <div>· <b>Free</b> to start</div>
+    </div>
+  </div>
+
+  <!-- ── Features ─────────────────────────────────────────── -->
+  <section class="section" id="features">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Features</span>
+        <h2 class="section-title">Everything your khata needs. None of what it doesn't.</h2>
+        <p class="section-sub">
+          Built voice-first. No inventory, no loan banners, no clutter — just the ten things that actually move money.
+        </p>
+      </div>
+
+      <div class="features">
+        <div class="feature">
+          <div class="feature-icon">🎤</div>
+          <h3>Voice entries</h3>
+          <p>Press the mic, say "Ramesh ko 500 udhar diye" — done. Works in 12 Indian languages, no typing needed.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">📒</div>
+          <h3>Udhar khata</h3>
+          <p>Customers and suppliers, with running balances. Track who owes you, and whom you owe.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">💬</div>
+          <h3>WhatsApp reminders</h3>
+          <p>One-tap reminders with pre-filled UPI links. Auto-matched replies land straight in your ledger.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">💸</div>
+          <h3>UPI payments</h3>
+          <p>Share your QR. Customer pays. The entry auto-reconciles — no manual update needed.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">📊</div>
+          <h3>Reports & PDFs</h3>
+          <p>Monthly statements, GST-ready exports, and a one-tap PDF for any customer. Share on WhatsApp.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">🔒</div>
+          <h3>PIN & biometric lock</h3>
+          <p>Your ledger stays yours. Lock the app with a 4-digit PIN or fingerprint.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">📴</div>
+          <h3>Offline-first</h3>
+          <p>No signal? No problem. Every entry writes to your phone first and syncs when you're back online.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">👥</div>
+          <h3>Multi-staff</h3>
+          <p>Up to 5 people share one shop ledger. Speaker recognition auto-attributes entries to the right person.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">🌐</div>
+          <h3>12 Indian languages</h3>
+          <p>Hindi, Tamil, Telugu, Bengali, Marathi, Gujarati, Kannada, Malayalam, Punjabi, Odia, Hinglish, English.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">☁️</div>
+          <h3>Cloud backup</h3>
+          <p>Sign in with Google. Your data follows you across phones. Lose your device? Log in and pick up where you left off.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">🔁</div>
+          <h3>Recurring entries</h3>
+          <p>Set it once. Milk supplier, rent, EMI — CredEasy logs it on the right day, every month.</p>
+        </div>
+        <div class="feature">
+          <div class="feature-icon">🧾</div>
+          <h3>Inventory (optional)</h3>
+          <p>Track stock alongside credit. Low-stock alerts so you never run out of fast-movers.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Voice section ────────────────────────────────────── -->
+  <section class="section" id="voice">
+    <div class="voice-section">
+      <div style="position:relative;z-index:1">
+        <span class="eyebrow" style="background:rgba(255,255,255,0.18);color:white">Voice-first</span>
+        <h2>Just speak. Your khata updates itself.</h2>
+        <p>
+          India's ASR models now hit 90%+ accuracy across 22 languages at sub-500ms latency. So instead of building another form-based khata, we built one that listens.
+        </p>
+        <ul class="voice-bullets">
+          <li><span class="check">✓</span> <span>Sub-2-second voice entry, even on a ₹6,000 Android</span></li>
+          <li><span class="check">✓</span> <span>Hinglish and code-switching by design — speak how you speak</span></li>
+          <li><span class="check">✓</span> <span>Speaker recognition tags the right staff member automatically</span></li>
+          <li><span class="check">✓</span> <span>Works offline; reconciles when you're back online</span></li>
+        </ul>
+      </div>
+      <div class="voice-visual">
+        <div class="voice-bubble">
+          <div class="who">You, 10:42 AM</div>
+          "Ramesh ko 500 rupaye udhar diye, 2 kilo aata bhi"
+        </div>
+        <div class="voice-bubble user">
+          <div class="who" style="color:rgba(255,255,255,0.8)">CredEasy</div>
+          Got it — Ramesh Kirana, ₹500 udhar. Add a 2 kg aata note? 🎯
+        </div>
+        <div class="voice-bubble">
+          <div class="who">You, 10:42 AM</div>
+          "Haan, 2 kilo aata"
+        </div>
+        <div class="voice-bubble user">
+          <div class="who" style="color:rgba(255,255,255,0.8)">CredEasy</div>
+          Saved. Balance: Ramesh owes ₹500. WhatsApp reminder sent ✓
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── How it works ─────────────────────────────────────── -->
+  <section class="section" id="how" style="background:var(--surface)">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">How it works</span>
+        <h2 class="section-title">From paper register to digital khata in 2 minutes</h2>
+        <p class="section-sub">No training, no accountant. If you can send a WhatsApp message, you can use CredEasy.</p>
+      </div>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">1</div>
+          <h3>Download & sign in</h3>
+          <p>Free from Google Play. Sign in with Google — that's it. No forms, no documents.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">2</div>
+          <h3>Add a customer</h3>
+          <p>Pick from your phone contacts. The customer doesn't need the app — they get a WhatsApp message.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">3</div>
+          <h3>Speak your entry</h3>
+          <p>Press the floating mic and say what happened. CredEasy figures out the rest.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">4</div>
+          <h3>Get paid faster</h3>
+          <p>Send a one-tap WhatsApp reminder with a UPI link. Money lands, ledger updates automatically.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Comparison table ─────────────────────────────────── -->
+  <section class="section">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Why CredEasy</span>
+        <h2 class="section-title">Built for speed. Designed for Bharat.</h2>
+        <p class="section-sub">Other khatas make you tap. CredEasy makes you talk.</p>
+      </div>
+
+      <div class="compare-wrap">
+        <table class="compare">
+          <thead>
+            <tr>
+              <th></th>
+              <th>Other khatas</th>
+              <th>CredEasy</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Primary input</td>
+              <td>Forms, keyboard, numeric pad per entry</td>
+              <td class="us">Floating mic on every screen — one press, one sentence</td>
+            </tr>
+            <tr>
+              <td>Udhar khata</td>
+              <td>Tabs for customers and suppliers, manual balances</td>
+              <td class="us">Same structure, but parties update by voice — balance is spoken on request</td>
+            </tr>
+            <tr>
+              <td>Reminders</td>
+              <td>Manual SMS templates, no payment link</td>
+              <td class="us">WhatsApp with pre-filled UPI; auto-matched replies reconcile the ledger</td>
+            </tr>
+            <tr>
+              <td>Multi-staff</td>
+              <td>Up to 3 staff, login switching</td>
+              <td class="us">Up to 5 staff + speaker recognition, no login switching</td>
+            </tr>
+            <tr>
+              <td>Offline</td>
+              <td>Read-only or no offline support</td>
+              <td class="us">Full entry, full search — syncs when you're back online</td>
+            </tr>
+            <tr>
+              <td>Pricing</td>
+              <td>Free with ads, or ₹99–₹199/month</td>
+              <td class="us">14-day free trial, then ₹29/month. Ad-free on every paid plan.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Pricing ──────────────────────────────────────────── -->
+  <section class="section" id="pricing" style="background:var(--surface)">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Pricing</span>
+        <h2 class="section-title">Free to start. Cheap to keep.</h2>
+        <p class="section-sub">Try every plan free for 14 days. Cancel anytime from your store account.</p>
+      </div>
+
+      <div class="pricing">
+        <div class="plan">
+          <div class="plan-name">Basic</div>
+          <div class="plan-blurb">Keep your khata running</div>
+          <div class="plan-price">
+            <span class="num">₹29</span>
+            <span class="per">/ month</span>
+          </div>
+          <ul class="plan-features">
+            <li><span class="check">✓</span> Unlimited parties & entries</li>
+            <li><span class="check">✓</span> WhatsApp reminders</li>
+            <li><span class="check">✓</span> PDF statements</li>
+            <li><span class="check">✓</span> Voice assistant, 50 entries / month</li>
+            <li><span class="check">✓</span> Shows ads</li>
+          </ul>
+          <a class="plan-cta primary" href="#download">Start free trial</a>
+        </div>
+
+        <div class="plan featured">
+          <div class="plan-name">Ad-Free</div>
+          <div class="plan-blurb">No ads, ever</div>
+          <div class="plan-price">
+            <span class="num">₹59</span>
+            <span class="per">/ month</span>
+          </div>
+          <ul class="plan-features">
+            <li><span class="check">✓</span> Everything in Basic</li>
+            <li><span class="check">✓</span> Zero ads, ever</li>
+            <li><span class="check">✓</span> Faster, distraction-free entry</li>
+            <li><span class="check">✓</span> Voice assistant, unlimited</li>
+            <li><span class="check">✓</span> Priority support</li>
+          </ul>
+          <a class="plan-cta primary" href="#download">Start free trial</a>
+        </div>
+
+        <div class="plan">
+          <div class="plan-name">Premium</div>
+          <div class="plan-blurb">For growing shops</div>
+          <div class="plan-price">
+            <span class="num">₹99</span>
+            <span class="per">/ month</span>
+          </div>
+          <ul class="plan-features">
+            <li><span class="check">✓</span> Everything in Ad-Free</li>
+            <li><span class="check">✓</span> Download ALL data as PDF</li>
+            <li><span class="check">✓</span> Voice assistant, unlimited</li>
+            <li><span class="check">✓</span> Multi-staff (up to 5)</li>
+            <li><span class="check">✓</span> Priority support, same-day</li>
+          </ul>
+          <a class="plan-cta primary" href="#download">Start free trial</a>
+        </div>
+      </div>
+
+      <p style="text-align:center;margin-top:24px;font-size:13px;color:var(--text-muted)">
+        Prices in INR, exclusive of GST. Subscriptions auto-renew until cancelled.
+      </p>
+    </div>
+  </section>
+
+  <!-- ── FAQ ─────────────────────────────────────────────── -->
+  <section class="section" id="faq">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">FAQ</span>
+        <h2 class="section-title">Quick answers</h2>
+      </div>
+
+      <div class="faq">
+        <details class="faq-item">
+          <summary>Does CredEasy work offline?</summary>
+          <p>Yes. Every entry writes to your phone first. When you're back online, CredEasy syncs to the cloud automatically. You can use the app for a full day with no signal.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Do I need a smart phone?</summary>
+          <p>Android 8.0 or above. Any handset from the last five years (₹6,000+) will work smoothly. We're working on an iOS version — join the waitlist in the app.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Can my family use it with me?</summary>
+          <p>Yes. Invite up to 5 people as staff from Settings. Speaker recognition auto-tags the right person on each entry — no login switching.</p>
+        </details>
+        <details class="faq-item">
+          <summary>What if my Hindi isn't pure?</summary>
+          <p>Good. Speak how you speak. CredEasy handles Hinglish and regional code-switching by design. The voice model was trained on real shopkeeper speech, not textbook Hindi.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Will there be ads?</summary>
+          <p>Only on the ₹29 Basic plan. Every paid plan is ad-free — forever. Our business model is your subscription, not advertisers.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Is my data safe?</summary>
+          <p>Yes. Your ledger is stored on your device and in our cloud backup. Phone lost or broken? Sign in on a new device and your data is right there. We never sell or share your data.</p>
+        </details>
+        <details class="faq-item">
+          <summary>How do I cancel?</summary>
+          <p>From your Google Play or App Store account → Subscriptions. Your plan stays active until the end of the current billing period. We don't bury the cancel button.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Final CTA ───────────────────────────────────────── -->
+  <section class="section">
+    <div class="container">
+      <div class="final-cta">
+        <h2>Start your digital khata today.</h2>
+        <p>14 days free, no credit card. Set it up in 2 minutes, speak your first entry the same day.</p>
+        <a class="btn btn-secondary" href="https://play.google.com/store" target="_blank" rel="noopener">
+          ▶ Get CredEasy on Google Play
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Footer ──────────────────────────────────────────── -->
+  <footer>
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-col">
+          <a class="brand" href="#top">
+            <span class="brand-mark">₹</span>
+            CredEasy
+          </a>
+          <p class="footer-tag">
+            The voice-first digital khata for Bharat's merchants. Built with care in Bengaluru.
+          </p>
+        </div>
+        <div class="footer-col">
+          <h4>Product</h4>
+          <a href="#features">Features</a>
+          <a href="#voice">Voice assistant</a>
+          <a href="#pricing">Pricing</a>
+          <a href="#download">Download</a>
+        </div>
+        <div class="footer-col">
+          <h4>Company</h4>
+          <a href="#">About</a>
+          <a href="#">Contact</a>
+          <a href="#">Blog</a>
+          <a href="#">Careers</a>
+        </div>
+        <div class="footer-col">
+          <h4>Legal</h4>
+          <a href="https://credeasy.app/terms-and-conditions">Terms</a>
+          <a href="https://credeasy.app/privacy-policy">Privacy</a>
+          <a href="#">Refunds</a>
+          <a href="#">Security</a>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <div>© 2026 CredEasy. All rights reserved.</div>
+        <div class="footer-social">
+          <a href="#" aria-label="Twitter">𝕏</a>
+          <a href="#" aria-label="Instagram">📷</a>
+          <a href="#" aria-label="YouTube">▶</a>
+          <a href="#" aria-label="LinkedIn">in</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ── Theme toggle ────────────────────────────────────── -->
+  <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">🌙</button>
+
+  <script>
+    // Theme toggle with system-default + localStorage memory
+    (function() {
+      const root = document.documentElement;
+      const btn = document.getElementById('themeToggle');
+      const stored = localStorage.getItem('credeasy-theme');
+      if (stored === 'dark') { root.setAttribute('data-theme', 'dark'); btn.textContent = '☀️'; }
+      else if (stored === 'light') { root.setAttribute('data-theme', 'light'); btn.textContent = '🌙'; }
+      btn.addEventListener('click', () => {
+        const cur = root.getAttribute('data-theme');
+        if (cur === 'dark') { root.removeAttribute('data-theme'); localStorage.setItem('credeasy-theme', 'light'); btn.textContent = '🌙'; }
+        else { root.setAttribute('data-theme', 'dark'); localStorage.setItem('credeasy-theme', 'dark'); btn.textContent = '☀️'; }
+      });
+    })();
+
+    // Smooth scroll for anchor links (with offset for sticky nav)
+    document.querySelectorAll('a[href^="#"]').forEach(a => {
+      a.addEventListener('click', e => {
+        const id = a.getAttribute('href');
+        if (id === '#' || id.length < 2) return;
+        const target = document.querySelector(id);
+        if (!target) return;
+        e.preventDefault();
+        const top = target.getBoundingClientRect().top + window.scrollY - 70;
+        window.scrollTo({ top, behavior: 'smooth' });
+      });
+    });
+
+    // Animate elements on scroll
+    if ('IntersectionObserver' in window) {
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.style.opacity = '1';
+            entry.target.style.transform = 'translateY(0)';
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.1 });
+      document.querySelectorAll('.feature, .step, .plan, .faq-item').forEach(el => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(12px)';
+        el.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+        observer.observe(el);
+      });
+    }
+  </script>
+</body>
+</html>

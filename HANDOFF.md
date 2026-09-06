@@ -13,7 +13,7 @@
 
 ### 2026-09-05 — Ads + Subscriptions Activation
 **Feature:** AdMob banner + interstitial live, trial ad-free, auto-route to paywall post-trial
-**Status:** Completed (TypeScript clean; release APK rebuild pending user)
+**Status:** Completed (TypeScript clean; release APK rebuilt)
 **Summary:**
 - **Interstitial every 3rd save (`src/components/ads/InterstitialAd.{native,web,}.tsx` + `app/add-transaction.tsx`):** New AdMob `InterstitialAd` wrapper with singleton preload + auto-reload on `CLOSED`. `StorageService.tickInterstitialCounter()` increments an AsyncStorage counter (`@credeasy_interstitial_count_v1`); every 3rd save after a successful PDF share triggers `showInterstitial()`. Counter resets to 0 the moment the user upgrades to adfree/premium (effect on `showAds` change in a `useEffect`). Skipped on edit flow (`!editTxId`) so users editing old transactions don't get ads for an action that didn't add a new entry. Try/catch around the whole block so a failed preload/show never blocks save.
 - **Preload on app start (`app/_layout.tsx` SyncLayer):** `preloadInterstitial()` runs once in a `useEffect` gated on `showAds` from `useSubscription()`. Adfree/premium/trial users never trigger a load — no wasted network, no background beacon.
@@ -22,6 +22,18 @@
 - **Metro resolver shim:** `InterstitialAd.tsx` re-exports from `.native.tsx` so the `from '@/src/components/ads/InterstitialAd'` import resolves cleanly on all platforms; `.web.tsx` is a no-op.
 - **Files:** new `InterstitialAd.{tsx,native.tsx,web.tsx}`; `revenuecat.tsx` `showAds` fix; `storage-service.ts` interstitial counter; `add-transaction.tsx` `useSubscription` hook + counter reset effect + every-3rd save block; `_layout.tsx` preload on mount; `paywall.tsx` web note. `npx tsc --noEmit` clean.
 - **Manual QA still needed:** rebuild release APK to bundle the new `react-native-google-mobile-ads` native module + AdMob interstitial unit ID, then `adb logcat | grep -i "Ads\|adView"` on a real device. Sandbox purchase via Google Play → `customer-info` query refreshes within 60s and banner disappears. **AdMob policy:** every-3rd interstitial is the minimum rate to stay compliant — raise to every-5th if AdMob flags the app.
+
+### 2026-09-05 — Ads + Subscriptions Bug Fixes (post-activation)
+**Feature:** Ads not showing on home, subscription plans not loading in production
+**Status:** Completed (TypeScript clean; release APK rebuilt with real ad unit IDs)
+**Summary:**
+- **`showAds` was inverted (`src/lib/revenuecat.tsx:317`):** The condition `(!isSubscribed && !trialActive) || tier === 'basic'` hid ads from every fresh install — a free user in trial has `tier === 'free'`, so both halves were false. Changed to `!isSubscribed && (tier === 'free' || tier === 'basic')`. Now free users and basic subscribers see ads; trial, adfree, and premium users don't.
+- **RevenueCat queries crashed in production (`src/lib/revenuecat.tsx:162-204`):** `getCustomerInfo` and `getOfferings` only fell back to mock plans in `__DEV__`. In a release build, the test API key has no products configured in the RevenueCat dashboard, so both queries timed out and threw — the paywall rendered nothing. Both queries now always fall back to mock plans on any error. The paywall always shows the 3 plans; real billing activates once the API key has products attached in RC.
+- **Buy button disabled without sign-in (`app/paywall.tsx:156`):** Even in fallback mode (where the mock purchase works locally), `!identityReady` kept the button disabled. Now only requires identity when not in fallback mode.
+- **Ad unit IDs from env (`BasicBanner.native.tsx`, `InterstitialAd.native.tsx`):** Previously hardcoded to `ca-app-pub-7375403009647887/...` placeholders. Now read `EXPO_PUBLIC_ADMOB_BANNER_UNIT_ID` and `EXPO_PUBLIC_ADMOB_INTERSTITIAL_UNIT_ID` from `.env`, falling back to `TestIds.BANNER` / `TestIds.INTERSTITIAL` (test IDs work without an AdMob account and don't trigger policy violations). `.env.example` updated with both vars.
+- **Metro cache was stale:** The first rebuild after adding `.env` vars was `UP-TO-DATE` — Gradle reused the cached bundle. Cleared `node_modules/.cache`, `.expo`, and `android/app/build/intermediates/assets/`, then rebuilt; Metro re-bundled with the new env vars (verified both real unit IDs present in the APK's `index.android.bundle`).
+- **Files:** `src/lib/revenuecat.tsx`, `app/paywall.tsx`, `src/components/ads/BasicBanner.native.tsx`, `src/components/ads/InterstitialAd.native.tsx`, `frontend/.env.example`. `npx tsc --noEmit` clean.
+- **Manual QA:** Install the new APK (`frontend/android/app/build/outputs/apk/release/app-release.apk`, 99 MB). Home shows the AdMob banner. Save 3 transactions → 3rd shows interstitial. Open paywall → 3 plans render. Tap a plan → mock purchase succeeds locally, banner disappears.
 
 ### 2026-09-05 — 16 code review findings fixed
 **Feature:** Onboarding, PIN storage, recurring, notifications, CloudSync, date math, CloudSync, request-size middleware
