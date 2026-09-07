@@ -990,15 +990,17 @@ def parse_ledger_text(text: str) -> dict:
                 parties[current_party]["phone"] = phone
 
         # ── 3. Balance / Total Due line (sets openingBalance) ────────────────
+        # A balance line must NOT also become a DEBIT transaction — otherwise
+        # the import double-counts (e.g. "Total Due ₹500" → party OB=500
+        # + tx=500 = ₹1,000 total). Skip to next line after extracting.
         if current_party and _is_balance_line(line):
-            # Extract the largest amount on this line as the balance
             amounts_in_line = amount_pattern.findall(line)
             if amounts_in_line:
-                # Take the last/largest amount — total lines usually have one, but
-                # fall back to the last one if there are multiple
                 balance_amount = max(parse_amount(a) or 0 for a in amounts_in_line)
                 if balance_amount > 0 and parties[current_party]["openingBalance"] == 0:
                     parties[current_party]["openingBalance"] = balance_amount
+            # Balance line is summary data only — never a transaction entry
+            continue
 
         # ── 4. Per-line transaction: date + amount + Gave/Got ────────────────
         amount_match = amount_pattern.search(line)
