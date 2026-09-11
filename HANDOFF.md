@@ -11,6 +11,15 @@
 
 <!-- Add completed features below this line -->
 
+### 2026-09-12 — Home actions, notifications, reminders, and business QR
+**Feature:** Top-bar settings/notifications, overdue reminders, QR-backed WhatsApp messages, and voice fallback
+**Status:** Completed (web SPA + backend syntax and regression tests pass)
+**Summary:**
+- Settings was removed from the tab bar and moved beside notifications in the home top bar. Notifications now persist locally, mark read when opened, and update the browser/app badge.
+- “Remind all overdue” filters real unpaid parties with phone numbers, hides quick controls while the batch is active, opens QR-aware WhatsApp messages, and restores controls when complete or stopped.
+- Business QR uploads are stored in Supabase Storage and its URL is persisted in `business_profiles`; migration now adds `qr_url` and the storage bucket.
+- Voice assistant now has a deterministic offline fallback for common ledger commands when provider credits are unavailable.
+
 ### 2026-09-06 — Web SPA (OkCredit-style merchant web app)
 **Feature:** Vanilla ES-module SPA at `/app/` with Google OAuth, localStorage store, and live cloud sync
 **Status:** Completed (deployed at https://credeasy-app.onrender.com/)

@@ -44,6 +44,7 @@ create table business_profiles (
     owner_phone text default '',
     gstin       text default '',
     upi_id      text default '',
+    qr_url      text default '',
     updated_at  timestamptz default now(),
     unique (user_id)
 );
@@ -58,6 +59,11 @@ create policy "profiles_update" on business_profiles for update
     using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "profiles_delete" on business_profiles for delete
     using (auth.uid() = user_id);
+
+-- The backend uploads merchant QR images with the service-role key.
+insert into storage.buckets (id, name, public)
+values ('business-assets', 'business-assets', true)
+on conflict (id) do update set public = excluded.public;
 
 -- ---------------------------------------------------------------- parties ---
 create table parties (
