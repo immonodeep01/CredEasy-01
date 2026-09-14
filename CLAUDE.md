@@ -82,6 +82,11 @@ docs/
 └── FIXES_APPLIED.md      # Fix history log
 ```
 
+## Current Worktree Notes
+- The checked-out `frontend` path is a gitlink without a checked-out submodule; the implemented client available in this worktree is the vanilla SPA under `app/`.
+- The SPA now owns top-bar settings/notifications, overdue WhatsApp reminders, local notification/app-badge state, and business QR upload wiring.
+- QR uploads require the `business-assets` Supabase Storage bucket and the `qr_url` column from `docs/supabase-migration.sql`; keep `SUPABASE_SERVICE_ROLE_KEY` server-side only.
+
 ---
 
 # My Instructions

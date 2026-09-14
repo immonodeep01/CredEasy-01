@@ -119,6 +119,11 @@
             <line x1="21" y1="12" x2="9" y2="12"/>
           </svg>
         </button>
+        <button class="btn-icon notification-button" id="btn-notifications" title="Notifications" aria-label="Notifications">
+          <span aria-hidden="true">🔔</span>
+          <span class="notification-count" id="notification-count" hidden>0</span>
+        </button>
+        <button class="btn-icon" id="btn-settings-top" title="Settings" aria-label="Settings">⚙</button>
       </div>
     </div>
   </header>
@@ -129,7 +134,6 @@
     <button class="tab" data-tab="parties" role="tab" aria-selected="false">Parties</button>
     <button class="tab" data-tab="add" role="tab" aria-selected="false">Add Transaction</button>
     <button class="tab" data-tab="reports" role="tab" aria-selected="false">Reports</button>
-    <button class="tab" data-tab="settings" role="tab" aria-selected="false">Settings</button>
   </nav>
 
   <!-- Content area -->
@@ -142,6 +146,16 @@
           <div class="summary-label">You will get</div>
           <div class="summary-amount" id="summary-get">₹0</div>
           <div class="summary-count" id="summary-get-count">0 customers</div>
+        </div>
+        <div class="quick-actions" id="quick-actions">
+          <button class="btn btn-secondary btn-sm" id="btn-remind-all" type="button">Remind all overdue</button>
+          <button class="btn btn-secondary btn-sm" id="btn-voice" type="button">🎤 Voice assistant</button>
+          <button class="btn btn-primary btn-sm" id="btn-add-party-top" type="button">+ Add customer/supplier</button>
+        </div>
+        <div class="reminder-progress" id="reminder-progress" hidden>
+          <strong>Overdue reminders</strong>
+          <span id="reminder-progress-label"></span>
+          <button class="btn-link" id="btn-stop-reminders" type="button">Stop</button>
         </div>
         <div class="summary-card red">
           <div class="summary-label">You will give</div>
@@ -248,6 +262,14 @@
             <div class="settings-label">Business Name</div>
             <div class="settings-value" id="settings-name">My Shop</div>
           </div>
+          <div class="settings-row">
+            <div>
+              <div class="settings-label">Business QR</div>
+              <div class="settings-value">Shown in WhatsApp reminders</div>
+            </div>
+            <label class="btn btn-secondary btn-sm" for="business-qr">Upload QR</label>
+            <input id="business-qr" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+          </div>
           <button class="btn-link btn-sm" id="btn-edit-name">Edit</button>
         </div>
         <div class="settings-row">
@@ -283,6 +305,17 @@
           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
       </button>
+    </div>
+
+    <div id="notifications-modal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="notifications-title">
+      <div class="modal-backdrop" id="notifications-backdrop"></div>
+      <div class="modal-panel">
+        <div class="modal-header">
+          <h3 id="notifications-title">Notifications</h3>
+          <button class="btn-icon" id="notifications-close" aria-label="Close">×</button>
+        </div>
+        <div id="notifications-list" class="notifications-list"></div>
+      </div>
     </div>
     <form id="party-form" novalidate>
       <div class="form-group">

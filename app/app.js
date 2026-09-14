@@ -39,6 +39,7 @@ const LS_SESSION  = 'credeasy.session';
 const LS_PARTIES  = 'credeasy.parties';
 const LS_TXS     = 'credeasy.transactions';
 const LS_PROFILE = 'credeasy.profile';
+const LS_NOTIFICATIONS = 'credeasy.notifications';
 
 const Store = {
   getParties: () => { try { return JSON.parse(localStorage.getItem(LS_PARTIES) || '[]'); } catch { return []; } },
@@ -52,6 +53,11 @@ const Store = {
     catch { return {}; }
   },
   setProfile: (p) => localStorage.setItem(LS_PROFILE, JSON.stringify(p)),
+  getNotifications: () => {
+    try { return JSON.parse(localStorage.getItem(LS_NOTIFICATIONS) || '[]') || []; }
+    catch { return []; }
+  },
+  setNotifications: (items) => localStorage.setItem(LS_NOTIFICATIONS, JSON.stringify(items)),
 
   getSession: () => {
     try { return JSON.parse(localStorage.getItem(LS_SESSION) || 'null'); }
@@ -60,6 +66,50 @@ const Store = {
   setSession: (s) => localStorage.setItem(LS_SESSION, JSON.stringify(s)),
   clearSession: () => localStorage.removeItem(LS_SESSION),
 };
+
+function unreadNotifications() {
+  return Store.getNotifications().filter(item => !item.read);
+}
+
+function renderNotificationBadge() {
+  const count = unreadNotifications().length;
+  const badge = document.getElementById('notification-count');
+  if (badge) {
+    badge.hidden = count === 0;
+    badge.textContent = count > 99 ? '99+' : String(count);
+  }
+  document.title = count ? `(${count}) CredEasy — Digital Khata` : 'CredEasy — Digital Khata';
+  if ('setAppBadge' in navigator && 'clearAppBadge' in navigator) {
+    const badgeUpdate = count ? navigator.setAppBadge(count) : navigator.clearAppBadge();
+    badgeUpdate.catch(error => console.warn('[Notifications] app badge update failed', error));
+  }
+}
+
+function addNotification(title, message) {
+  const items = Store.getNotifications();
+  items.unshift({ id: crypto.randomUUID(), title, message, read: false, createdAt: new Date().toISOString() });
+  Store.setNotifications(items.slice(0, 50));
+  renderNotificationBadge();
+}
+
+function openNotifications() {
+  const modal = document.getElementById('notifications-modal');
+  const list = document.getElementById('notifications-list');
+  const items = Store.getNotifications();
+  if (list) {
+    list.innerHTML = items.length
+      ? items.map(item => `<div class="notification-item"><strong>${escHtml(item.title)}</strong><p>${escHtml(item.message)}</p><small>${fmtDate(item.createdAt)}</small></div>`).join('')
+      : '<div class="empty-state"><div class="empty-icon">🔔</div><h3>All caught up</h3><p>No new notifications.</p></div>';
+  }
+  Store.setNotifications(items.map(item => ({ ...item, read: true })));
+  renderNotificationBadge();
+  if (modal) modal.hidden = false;
+}
+
+function closeNotifications() {
+  const modal = document.getElementById('notifications-modal');
+  if (modal) modal.hidden = true;
+}
 
 /** Calculate current balance for a party from transactions + opening balance */
 function partyBalance(party, txs) {
@@ -105,12 +155,16 @@ async function syncToCloud(token) {
 async function loadFromCloud(token) {
   if (!token) return;
   try {
-    const [pData, tData] = await Promise.all([
+    const [pData, tData, profileData] = await Promise.all([
       apiFetch('/api/parties', { token }),
       apiFetch('/api/transactions', { token }),
+      apiFetch('/api/profile', { token }),
     ]);
     if (pData.parties?.length) Store.setParties(pData.parties);
     if (tData.transactions?.length) Store.setTxs(tData.transactions);
+    if (profileData.profile?.qr_url) {
+      Store.setProfile({ ...Store.getProfile(), qrUrl: profileData.profile.qr_url });
+    }
   } catch { /* offline — keep local data */ }
 }
 
@@ -233,6 +287,7 @@ function renderDashboard() {
   const parties = Store.getParties();
   const txs = Store.getTxs();
   const profile = Store.getProfile();
+  renderNotificationBadge();
 
   // Update shop name
   const shopEl = document.getElementById('shop-name');
@@ -267,6 +322,79 @@ function renderDashboard() {
     }).slice(0, 5);
     recentList.innerHTML = sorted.map(p => renderPartyItem(p, partyBalance(p, txs))).join('');
   }
+}
+
+function overdueParties() {
+  const today = Date.now();
+  const txs = Store.getTxs();
+  return Store.getParties().filter(p => {
+    const balance = partyBalance(p, txs);
+    if (balance <= 0 || !p.phone) return false;
+    const lastDue = txs
+      .filter(t => (t.partyId === p.id || t.party_id === p.id) && (t.type === 'GAVE' || t.type === 'DEBIT'))
+      .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+    return lastDue && today - new Date(lastDue.date).getTime() >= 7 * 86400000;
+  });
+}
+
+function reminderMessage(party) {
+  const balance = partyBalance(party, Store.getTxs());
+  const profile = Store.getProfile();
+  const qrLine = profile.qrUrl ? `\nPay securely using our QR: ${profile.qrUrl}` : '';
+  return `Namaste ${party.name}, your pending balance with ${profile.name || 'our shop'} is ${fmt(balance)}. Please clear it at your convenience.${qrLine}`;
+}
+
+function remindAllOverdue() {
+  const parties = overdueParties();
+  if (!parties.length) {
+    showToast('No overdue parties with a phone number.');
+    return;
+  }
+  const progress = document.getElementById('reminder-progress');
+  const quickActions = document.getElementById('quick-actions');
+  const label = document.getElementById('reminder-progress-label');
+  if (progress) progress.hidden = false;
+  if (quickActions) quickActions.hidden = true;
+  parties.forEach((party, index) => {
+    const phone = party.phone.replace(/\D/g, '');
+    const normalized = phone.length === 10 ? `91${phone}` : phone;
+    const url = `https://wa.me/${normalized}?text=${encodeURIComponent(reminderMessage(party))}`;
+    setTimeout(() => {
+      if (document.getElementById('reminder-progress')?.hidden) return;
+      window.open(url, '_blank', 'noopener,noreferrer');
+      if (label) label.textContent = `${index + 1} of ${parties.length} opened`;
+      if (index === parties.length - 1) {
+        addNotification('Reminders sent', `${parties.length} overdue WhatsApp reminders were opened.`);
+        setTimeout(stopReminders, 700);
+      }
+    }, index * 250);
+  });
+}
+
+function stopReminders() {
+  const progress = document.getElementById('reminder-progress');
+  const quickActions = document.getElementById('quick-actions');
+  if (progress) progress.hidden = true;
+  if (quickActions) quickActions.hidden = false;
+}
+
+async function uploadBusinessQr(file) {
+  if (!file) return;
+  const session = Store.getSession();
+  if (!session?.access_token) { showToast('Sign in before uploading a QR.'); return; }
+  const body = new FormData();
+  body.append('file', file);
+  const response = await fetch(`${BACKEND_URL}/api/profile/business-qr`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${session.access_token}` },
+    body,
+  });
+  const data = await response.json();
+  if (!response.ok || !data.qr_url) throw new Error(data.detail || 'Could not upload QR');
+  const profile = Store.getProfile();
+  profile.qrUrl = data.qr_url;
+  Store.setProfile(profile);
+  showToast('Business QR saved ✓');
 }
 
 // ── Parties view ─────────────────────────────────────────────────────────────
@@ -367,6 +495,7 @@ function setupTxForm() {
     form.reset();
     document.getElementById('tx-date').value = new Date().toISOString().split('T')[0];
     showToast('Transaction saved ✓');
+    addNotification('Transaction saved', `${fmt(amount)} recorded for ${document.getElementById('tx-party').selectedOptions[0]?.textContent || 'party'}.`);
     renderDashboard();
     renderParties();
 
@@ -456,6 +585,7 @@ function setupPartyModal() {
 
     closeModal();
     showToast('Party added ✓');
+    addNotification('Party added', `${name} was added as a ${partyFormType.toLowerCase()}.`);
     renderParties();
     renderDashboard();
 
@@ -496,7 +626,7 @@ function setupCarousel() {
 }
 
 // ── Main init ────────────────────────────────────────────────────────────────
-function init() {
+async function init() {
   // Show loading while we check session
   showLoading(true);
 
@@ -517,6 +647,31 @@ function init() {
   document.getElementById('btn-google')?.addEventListener('click', signInWithGoogle);
   document.getElementById('btn-signout')?.addEventListener('click', signOut);
   document.getElementById('btn-signout-settings')?.addEventListener('click', signOut);
+  document.getElementById('btn-settings-top')?.addEventListener('click', () => {
+    activateTab('settings');
+    window.location.hash = '#/settings';
+  });
+  document.getElementById('btn-notifications')?.addEventListener('click', openNotifications);
+  document.getElementById('notifications-close')?.addEventListener('click', closeNotifications);
+  document.getElementById('notifications-backdrop')?.addEventListener('click', closeNotifications);
+  document.getElementById('btn-remind-all')?.addEventListener('click', remindAllOverdue);
+  document.getElementById('btn-stop-reminders')?.addEventListener('click', stopReminders);
+  document.getElementById('btn-add-party-top')?.addEventListener('click', () => {
+    activateTab('parties');
+    document.getElementById('btn-add-party')?.click();
+  });
+  document.getElementById('btn-voice')?.addEventListener('click', () => {
+    showToast('Voice assistant is available in the mobile app.');
+  });
+  document.getElementById('business-qr')?.addEventListener('change', async event => {
+    try {
+      await uploadBusinessQr(event.target.files?.[0]);
+    } catch (error) {
+      showToast(error.message || 'Could not upload QR.');
+    } finally {
+      event.target.value = '';
+    }
+  });
 
   // ── View all parties ──────────────────────────────────────
   document.getElementById('btn-view-all-parties')?.addEventListener('click', () => {

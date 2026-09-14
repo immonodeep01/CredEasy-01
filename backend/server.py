@@ -135,6 +135,7 @@ MAX_ACTIONS = 6
 MAX_NAME_LEN = 100
 MAX_NOTE_LEN = 200
 MAX_PHONE_LEN = 20
+MAX_QR_BYTES = 5 * 1024 * 1024
 ALLOWED_ROUTES = {"dashboard", "parties", "billing", "reports", "settings"}
 
 
@@ -659,6 +660,42 @@ def sanitize_actions(raw: object) -> List[dict]:
     return actions
 
 
+def offline_voice_response(transcript: str, context: Dict[str, Any]) -> Optional[dict]:
+    """Keep common ledger commands useful when hosted AI credits are exhausted."""
+    match = re.search(
+        r"(?P<party>[A-Za-z][A-Za-z .'-]{1,60})\s+(?:ko|for)\s+"
+        r"(?P<amount>\d+(?:\.\d+)?)\s*(?:rupaye|rupees|rs|₹)?\s*"
+        r"(?P<verb>diye|diya|gave|got|mila|liya)",
+        transcript,
+        re.IGNORECASE,
+    )
+    if match:
+        amount = _clean_amount(match.group("amount"))
+        if amount:
+            gave = match.group("verb").lower() in {"diye", "diya", "gave"}
+            return {
+                "reply": f"{fmt_amount(amount)} recorded for {match.group('party').strip()}.",
+                "actions": [{
+                    "type": "ADD_TRANSACTION",
+                    "partyName": match.group("party").strip(),
+                    "amount": amount,
+                    "txType": "GAVE" if gave else "GOT",
+                    "note": "",
+                }],
+            }
+    if re.search(r"\b(overdue|pending|baaki|balance)\b", transcript, re.IGNORECASE):
+        parties = context.get("parties", [])
+        due = [p for p in parties if isinstance(p, dict) and float(p.get("balance", 0) or 0) > 0]
+        if due:
+            total = sum(float(p.get("balance", 0) or 0) for p in due)
+            return {"reply": f"{fmt_amount(total)} is pending across {len(due)} parties.", "actions": []}
+    return None
+
+
+def fmt_amount(amount: float) -> str:
+    return f"₹{amount:,.2f}".rstrip("0").rstrip(".")
+
+
 @api_router.post("/voice/assist")
 async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_authenticated_user)):
     enforce_user_rate_limit(str(user["user_id"]))
@@ -760,7 +797,13 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
             last_error = e
 
     if not text:
-        raise HTTPException(status_code=502, detail="The assistant is unavailable. Please add credits to your AI provider account.")
+        fallback = offline_voice_response(transcript, payload.context)
+        if fallback:
+            return {**fallback, "transcript": transcript, "provider": "offline"}
+        raise HTTPException(
+            status_code=503,
+            detail="Voice AI is temporarily unavailable. Try a simple amount command or configure a provider key.",
+        )
 
     cleaned = text.strip()
     if cleaned.startswith("```"):
@@ -1339,6 +1382,31 @@ class TxOut(BaseModel):
     created_at: Optional[str] = ""
 
 
+@api_router.get("/profile", response_model=dict)
+async def get_business_profile(user: dict = Depends(get_authenticated_user)):
+    if not SERVICE_ROLE_KEY:
+        return {"profile": {}}
+    try:
+        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
+            response = await client.get(
+                f"{SUPABASE_URL}/rest/v1/business_profiles",
+                headers=_supabase_headers(SERVICE_ROLE_KEY),
+                params={
+                    "user_id": f"eq.{user['user_id']}",
+                    "select": "name,owner_phone,gstin,upi_id,qr_url",
+                    "limit": "1",
+                },
+            )
+        if response.status_code != 200:
+            logger.warning("get_business_profile: Supabase returned %s", response.status_code)
+            return {"profile": {}}
+        rows = response.json()
+        return {"profile": rows[0] if rows else {}}
+    except httpx.HTTPError:
+        logger.exception("get_business_profile failed")
+        return {"profile": {}}
+
+
 def _supabase_headers(api_key: str) -> dict:
     return {"Authorization": f"Bearer {api_key}", "apikey": api_key, "Content-Type": "application/json"}
 
@@ -1445,6 +1513,66 @@ async def append_transaction(tx: TxIn, user: dict = Depends(get_authenticated_us
     except Exception:
         logger.exception("append_transaction failed")
         return {"ok": False, "error": "backend error"}
+
+
+@api_router.post("/profile/business-qr", response_model=dict)
+async def upload_business_qr(
+    file: UploadFile = File(...),
+    user: dict = Depends(get_authenticated_user),
+):
+    """Store a merchant QR in Supabase Storage and persist its public URL."""
+    if not SERVICE_ROLE_KEY:
+        raise HTTPException(status_code=503, detail="Cloud storage is not configured")
+    allowed_types = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+    extension = allowed_types.get(file.content_type or "")
+    if not extension:
+        raise HTTPException(status_code=415, detail="QR must be a PNG, JPEG, or WebP image")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="QR image is empty")
+    if len(content) > MAX_QR_BYTES:
+        raise HTTPException(status_code=413, detail="QR image must be 5 MB or smaller")
+
+    bucket = os.environ.get("BUSINESS_QR_BUCKET", "business-assets")
+    object_path = f"{user['user_id']}/business-qr.{extension}"
+    storage_url = f"{SUPABASE_URL}/storage/v1/object/{bucket}/{object_path}"
+    headers = {
+        "Authorization": f"******",
+        "apikey": SERVICE_ROLE_KEY,
+        "Content-Type": file.content_type,
+        "x-upsert": "true",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
+            upload = await client.post(storage_url, headers=headers, content=content)
+            if upload.status_code not in (200, 201):
+                logger.warning("business QR upload failed: %s %s", upload.status_code, upload.text)
+                raise HTTPException(status_code=502, detail="Could not store business QR")
+
+            qr_url = os.environ.get(
+                "BUSINESS_QR_PUBLIC_BASE_URL",
+                f"{SUPABASE_URL}/storage/v1/object/public/{bucket}",
+            ).rstrip("/") + f"/{object_path}"
+            profile = {
+                "id": f"profile-{user['user_id']}",
+                "user_id": user["user_id"],
+                "qr_url": qr_url,
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            saved = await client.post(
+                f"{SUPABASE_URL}/rest/v1/business_profiles",
+                headers={**_supabase_headers(SERVICE_ROLE_KEY), "Prefer": "resolution=merge-duplicates"},
+                json=profile,
+            )
+            if saved.status_code not in (200, 201):
+                logger.warning("business profile QR URL save failed: %s %s", saved.status_code, saved.text)
+                raise HTTPException(status_code=502, detail="QR uploaded but profile could not be updated")
+            return {"ok": True, "qr_url": qr_url}
+    except HTTPException:
+        raise
+    except httpx.HTTPError:
+        logger.exception("business QR storage request failed")
+        raise HTTPException(status_code=502, detail="Could not store business QR")
 
 
 # Include the router in the main app
