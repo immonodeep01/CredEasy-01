@@ -26,6 +26,10 @@ requires a development or production build that includes
 `react-native-audio-api`; it is not available in Expo Go. Android builds also
 package the ABI-matched Oboe shared library required by the audio module; the
 release APK must contain both `libreact-native-audio-api.so` and `liboboe.so`.
+The backend must install the `websockets` dependency so Uvicorn can accept the
+native WebSocket connection. Chirp 3 requests use the `asia-southeast1` Speech
+location by default; set `GOOGLE_CLOUD_SPEECH_LOCATION` only to a location that
+supports Chirp 3, and use the matching regional Speech API endpoint.
 The deployed backend must include `/api/voice/transcribe/stream` to get interim
 transcripts and avoid the upload fallback; an older deployment can still
 transcribe the captured WAV through `/api/voice/transcribe`.

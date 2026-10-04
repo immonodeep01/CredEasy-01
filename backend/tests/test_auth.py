@@ -232,6 +232,9 @@ class TestProtectedRoutes:
                 "language": "hi-IN",
             }
 
+        assert captured[0]["recognizer"] == (
+            "projects/test-project/locations/asia-southeast1/recognizers/_"
+        )
         assert captured[0]["streaming_config"]["config"]["model"] == "chirp_3"
         assert (
             captured[0]["streaming_config"]["config"]["explicit_decoding_config"][
@@ -316,12 +319,44 @@ class TestProtectedRoutes:
         assert response.json()["language"] == "en-IN"
         assert (
             captured["recognizer"]
-            == "projects/test-project/locations/global/recognizers/_"
+            == "projects/test-project/locations/asia-southeast1/recognizers/_"
         )
         assert captured["config"]["auto_decoding_config"] == {}
         assert captured["config"]["language_codes"] == ["en-IN", "hi-IN"]
         assert captured["config"]["model"] == "chirp_3"
         assert captured["content"] == b"audio-bytes"
+
+    def test_voice_transcribe_uses_configured_google_speech_location(
+        self, client, monkeypatch
+    ):
+        monkeypatch.setitem(
+            client.app.dependency_overrides,
+            server.get_authenticated_user,
+            lambda: {"user_id": SUPABASE_USER_PAYLOAD["id"]},
+        )
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+        monkeypatch.setenv("GOOGLE_CLOUD_SPEECH_LOCATION", "us")
+        captured = {}
+
+        class FakeSpeechClient:
+            async def recognize(self, request):
+                captured.update(request)
+                return type("RecognizeResponse", (), {"results": []})()
+
+        monkeypatch.setattr(
+            server, "get_google_speech_client", lambda: FakeSpeechClient()
+        )
+
+        response = client.post(
+            "/api/voice/transcribe",
+            files={"file": ("speech.wav", b"audio-bytes", "audio/wav")},
+        )
+
+        assert response.status_code == 200
+        assert (
+            captured["recognizer"]
+            == "projects/test-project/locations/us/recognizers/_"
+        )
 
     def test_voice_transcribe_does_not_fallback_after_configured_google_fails(
         self, client, monkeypatch

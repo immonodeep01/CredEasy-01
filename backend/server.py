@@ -472,12 +472,26 @@ def get_google_cloud_project() -> Optional[str]:
     return project.strip() if project and project.strip() else None
 
 
+def get_google_cloud_speech_location() -> str:
+    location = os.environ.get("GOOGLE_CLOUD_SPEECH_LOCATION", "asia-southeast1")
+    return location.strip() or "asia-southeast1"
+
+
 def get_google_speech_client() -> Any:
     global _google_speech_client
     if _google_speech_client is None:
+        from google.api_core.client_options import ClientOptions
         from google.cloud.speech_v2 import SpeechAsyncClient
 
-        _google_speech_client = SpeechAsyncClient()
+        location = get_google_cloud_speech_location()
+        endpoint = (
+            "speech.googleapis.com"
+            if location == "global"
+            else f"{location}-speech.googleapis.com"
+        )
+        _google_speech_client = SpeechAsyncClient(
+            client_options=ClientOptions(api_endpoint=endpoint)
+        )
     return _google_speech_client
 
 
@@ -507,6 +521,7 @@ async def voice_transcribe_stream(websocket: WebSocket):
         )
         user = await get_authenticated_user(authorization)
         google_project = get_google_cloud_project()
+        google_location = get_google_cloud_speech_location()
         if not google_project:
             await websocket.send_json(
                 {
@@ -521,7 +536,7 @@ async def voice_transcribe_stream(websocket: WebSocket):
 
         async def requests():
             yield {
-                "recognizer": f"projects/{google_project}/locations/global/recognizers/_",
+                "recognizer": f"projects/{google_project}/locations/{google_location}/recognizers/_",
                 "streaming_config": {
                     "config": {
                         "explicit_decoding_config": {
@@ -624,8 +639,9 @@ async def voice_transcribe_stream(websocket: WebSocket):
             response_task.cancel()
     except Exception as error:
         logger.error(
-            "Google Cloud streaming transcription failed (error_type=%s)",
+            "Google Cloud streaming transcription failed (error_type=%s, error=%s)",
             type(error).__name__,
+            error,
         )
         if response_task and not response_task.done():
             response_task.cancel()
@@ -720,10 +736,11 @@ async def voice_transcribe(file: UploadFile = File(...), user: dict = Depends(ge
     google_project = get_google_cloud_project()
     if google_project:
         try:
+            google_location = get_google_cloud_speech_location()
             client = get_google_speech_client()
             response = await client.recognize(
                 request={
-                    "recognizer": f"projects/{google_project}/locations/global/recognizers/_",
+                    "recognizer": f"projects/{google_project}/locations/{google_location}/recognizers/_",
                     "config": {
                         "auto_decoding_config": {},
                         "language_codes": ["en-IN", "hi-IN"],
@@ -753,8 +770,9 @@ async def voice_transcribe(file: UploadFile = File(...), user: dict = Depends(ge
             }
         except Exception as error:
             logger.error(
-                "Google Cloud Speech-to-Text failed (error_type=%s)",
+                "Google Cloud Speech-to-Text failed (error_type=%s, error=%s)",
                 type(error).__name__,
+                error,
             )
             raise HTTPException(
                 status_code=502,
@@ -1253,17 +1271,23 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
     # When configured, Gemini is the selected assistant provider. Do not silently
     # send ledger context to another provider if this request fails.
     if get_gemini_api_key():
+        gemini_model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
         try:
             gemini_client = get_gemini_client()
             response = await gemini_client.chat.completions.create(
-                model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+                model=gemini_model,
                 messages=messages,
                 temperature=0.7,
                 response_format={"type": "json_object"},
             )
             text = response.choices[0].message.content or ""
         except Exception as error:
-            logger.error("Gemini chat completion failed (error_type=%s)", type(error).__name__)
+            logger.error(
+                "Gemini chat completion failed (model=%s, error_type=%s, error=%s)",
+                gemini_model,
+                type(error).__name__,
+                error,
+            )
             raise HTTPException(status_code=502, detail="The assistant is unavailable. Please try again.")
     else:
         # Backward-compatible providers remain available until Gemini is configured.
