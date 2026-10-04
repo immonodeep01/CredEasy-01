@@ -667,7 +667,7 @@ class TestProtectedRoutes:
 
         assert response.status_code == 200
         assert response.json()['reply'] == 'Hello!'
-        assert captured['model'] == 'gemini-2.5-flash-lite'
+        assert captured['model'] == 'gemini-3.5-flash-lite'
         assert captured['response_format'] == {'type': 'json_object'}
 
     def test_voice_assist_does_not_fallback_after_configured_gemini_fails(self, client, monkeypatch):

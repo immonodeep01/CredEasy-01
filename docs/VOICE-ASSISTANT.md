@@ -62,8 +62,8 @@ installing the updated app.
 
 ## Gemini
 
-Set `GEMINI_API_KEY` on the backend to enable Gemini 2.5 Flash-Lite assistant
-replies. `GEMINI_MODEL` defaults to `gemini-2.5-flash-lite`.
+Set `GEMINI_API_KEY` on the backend to enable Gemini assistant replies.
+`GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`.
 
 Existing transcription and synthesis providers are used only while
 `GOOGLE_CLOUD_PROJECT` is unset. Once Google Cloud is configured, provider

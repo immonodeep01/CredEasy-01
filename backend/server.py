@@ -1271,7 +1271,7 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
     # When configured, Gemini is the selected assistant provider. Do not silently
     # send ledger context to another provider if this request fails.
     if get_gemini_api_key():
-        gemini_model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+        gemini_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
         try:
             gemini_client = get_gemini_client()
             response = await gemini_client.chat.completions.create(
