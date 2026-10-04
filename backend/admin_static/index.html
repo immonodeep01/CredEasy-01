@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#153b2b">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="same-origin">
+  <title>CredEasy Admin</title>
+  <link rel="stylesheet" href="/admin/assets/styles.css">
+  <script src="/admin/assets/supabase.min.js" defer></script>
+  <script src="/admin/assets/app.js" defer></script>
+</head>
+<body>
+  <div id="login" class="login-shell" hidden>
+    <section class="login-card" aria-labelledby="login-title">
+      <div class="brand-mark" aria-hidden="true">C</div>
+      <p class="login-kicker">CredEasy / Operations</p>
+      <h1 id="login-title">A clear view of the business.</h1>
+      <p class="login-copy">Sign in with an invited Google account. Admin access is checked by the backend on every request.</p>
+      <button id="google-login" class="button button-primary button-wide" type="button">Continue with Google</button>
+      <p id="login-error" class="notice notice-error" role="alert" hidden></p>
+      <p class="login-foot">Private workspace · Activity is recorded</p>
+    </section>
+  </div>
+
+  <div id="app" class="app-shell" hidden>
+    <aside id="sidebar" class="sidebar">
+      <a class="brand-lockup" href="/admin" aria-label="CredEasy Admin home">
+        <span class="brand-mark brand-mark-small" aria-hidden="true">C</span>
+        <span><strong>CredEasy</strong><small>Operations desk</small></span>
+      </a>
+      <div class="workspace-label">WORKSPACE</div>
+      <nav id="navigation" class="navigation" aria-label="Admin modules"></nav>
+      <div class="sidebar-bottom">
+        <div class="security-note"><span class="status-dot"></span><span>Private admin session<br><small>Every change is audited</small></span></div>
+        <button id="sign-out" class="sign-out" type="button"><span aria-hidden="true">↗</span> Sign out</button>
+      </div>
+    </aside>
+
+    <main class="main-shell">
+      <header class="topbar">
+        <button id="menu-toggle" class="icon-button mobile-menu" type="button" aria-label="Open navigation">☰</button>
+        <div class="breadcrumb"><span>CredEasy</span><span class="crumb-slash">/</span><strong id="page-crumb">Overview</strong></div>
+        <div class="topbar-actions">
+          <span id="role-badge" class="role-badge">Checking access</span>
+          <span id="admin-email" class="admin-email"></span>
+          <span class="avatar" aria-hidden="true">C</span>
+        </div>
+      </header>
+      <div id="toast" class="toast" role="status" aria-live="polite"></div>
+      <section id="page" class="page-content" tabindex="-1"></section>
+      <footer class="page-footer"><span>CredEasy Operations</span><span id="updated-at">Data loads from connected services</span></footer>
+    </main>
+  </div>
+</body>
+</html>
