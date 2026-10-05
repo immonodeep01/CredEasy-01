@@ -14,3 +14,9 @@ Supabase anon key. Never put `SUPABASE_SERVICE_ROLE_KEY` or other backend
 secrets in static files.
 
 The API is deployed separately at `https://credeasy-01.onrender.com`.
+
+The installed Android app currently uses the separate Cloud Run API at
+`https://credeasy-api-634736672458.asia-south1.run.app`. Configure backend
+secrets on the host used by the affected client; the account-deletion setup
+for Android is documented in
+[`CLOUD-RUN-ACCOUNT-DELETION.md`](./CLOUD-RUN-ACCOUNT-DELETION.md).

@@ -762,3 +762,6 @@ Native voice capture now reuses the permission granted by Expo Audio instead of 
 
 ### Chotu amount speech and account deletion
 Currency amounts are converted to spoken words in the shared TTS request path used by in-app Chotu and the widget, with ₹1,265 and singular ₹1 covered by backend regressions. Settings restores account deletion behind explicit destructive confirmation and the Security PIN flow, reusing the existing account-deletion service and retaining its remote-failure safeguards.
+
+### Android account deletion deployment configuration
+Traced the missing `SUPABASE_SERVICE_ROLE_KEY` response to the Cloud Run API configured in the Android build. Added a Secret Manager runbook for the `credeasy-api` service; no secret was added to the app or repository. Cloud Run credentials are not available in this workspace, so the secret must be configured by a project operator before Android account deletion can succeed.
