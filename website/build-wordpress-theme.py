@@ -678,14 +678,14 @@ The theme provides /admin and proxies only allowlisted admin API routes to the
 HTTPS backend. To set the backend URL, sign into WordPress and open
 Settings > General. Find the CredEasy Admin section near the bottom of the
 page. Enter the backend's HTTPS origin only, for example:
-https://credeasy-01.onrender.com
+https://credeasy-app.onrender.com
 Do not include /api, /admin, credentials, or a path. Save the setting; you do
 not need to edit wp-config.php or use SFTP. A shortcut is also available under
 Settings > CredEasy Admin.
 If the page reports that this backend host returned 404, confirm that the
 configured HTTPS origin is the deployed CredEasy FastAPI service with the
-admin routes deployed. The static website host credeasy-app.onrender.com is not
-the API. Check https://credeasy-01.onrender.com/api/admin/config; it should
+admin routes deployed. The static website host credeasy-01.onrender.com is not
+the API. Check https://credeasy-app.onrender.com/api/admin/config; it should
 return a JSON response (including a JSON configuration error if Supabase
 settings are missing), not a plain 404. Deploy the backend changes before
 expecting this route to work.
