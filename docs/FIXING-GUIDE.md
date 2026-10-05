@@ -221,6 +221,9 @@ You need an OAuth client so Google will trust your Supabase project.
      ```
    `credeasy` is your app's custom URL scheme — it's already declared as
    `"scheme": "credeasy"` in `frontend/app.json`, so you don't need to add it.
+   These are Supabase's post-auth return URLs. Do not add `credeasy://` as a
+   Google Cloud authorized redirect URI; Google must use the Supabase HTTPS
+   callback URI configured in §1.2.
    The `exp://**` line is what makes sign-in work while testing in Expo Go.
 
 ### 1.4 Create one shared Supabase client

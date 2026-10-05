@@ -1,12 +1,12 @@
 # CredEasy Privacy Policy
 
-**Last updated: September 1, 2026**
+**Last updated: September 27, 2026**
 
 ## 1. Who We Are
 
 **CredEasy** ("we", "us", "our") is a business ledger app for shopkeepers and traders. We help you manage customer and supplier records, track transactions, and generate bills.
 
-If you have questions about this policy, contact us at **[support@credeasy.app]**.
+If you have questions about this policy, contact us at **help.credeasy@gmail.com**.
 
 ---
 
@@ -16,7 +16,7 @@ If you have questions about this policy, contact us at **[support@credeasy.app]*
 
 | Data | Purpose |
 |---|---|
-| Business name, phone, GSTIN, UPI ID | Profile setup |
+| Business name, phone, GSTIN, UPI ID, business type, category, address, email, profile photo, payment QR | Business profile and payment details |
 | Customer / supplier name and phone number | Ledger management |
 | Transaction amounts, notes, dates | Ledger records |
 | Bill items, GST details, totals | Invoice generation |
@@ -28,7 +28,7 @@ When you sign in with Google, we receive your name, email address, and profile p
 
 ### 2.3 Automatically collected information
 
-- **Device identifiers** — used to target and measure advertising (Basic tier only).
+- **Device identifiers** — used to deliver and measure advertising.
 - **Crash and usage logs** — app performance and error diagnostics.
 - **In-app voice assistant transcripts** — transcribed and sent to our backend to generate replies; not stored beyond the session.
 
@@ -36,11 +36,10 @@ When you sign in with Google, we receive your name, email address, and profile p
 
 ## 3. How We Use Your Information
 
-- **Provide the ledger service** — store and display your business records on your device and (when signed in) back them up to the cloud.
+- **Provide the ledger service** — store and display your business records on your device. Google Drive is the reinstall-recovery backup path when Google access is granted and a backup completes.
 - **Voice assistant** — audio is transcribed by our backend, processed, and the response is returned; no audio is persisted.
-- **Subscriptions** — payment processing is handled by Apple App Store / Google Play Store and RevenueCat. We do not store payment card numbers.
-- **Advertising** — the Basic tier shows Google AdMob banners. Google may collect device identifiers and usage data per [Google's Privacy Policy](https://policies.google.com/privacy). This can be disabled by subscribing to Ad-Free or Premium.
-- **Analytics** — we use RevenueCat for subscription analytics and AdMob for ad performance analytics.
+- **Advertising** — Google AdMob ads support the free app. Google may collect device identifiers and usage data per [Google's Privacy Policy](https://policies.google.com/privacy).
+- **Backup and restore** — if you sign in with Google and grant Drive access, CredEasy stores a backup of your ledger in your Google Drive so it can be restored after reinstalling or changing devices.
 
 ---
 
@@ -48,9 +47,8 @@ When you sign in with Google, we receive your name, email address, and profile p
 
 | Provider | What they receive | Privacy Policy |
 |---|---|---|
-| **Supabase** | Cloud backup of ledger data | https://supabase.com/privacy |
-| **Google Sign-In** | OAuth token, user profile | https://policies.google.com/privacy |
-| **RevenueCat** | Subscription status, device identifiers | https://www.revenuecat.com/privacy |
+| **Supabase** | Account authentication and best-effort ledger sync | https://supabase.com/privacy |
+| **Google Sign-In and Drive** | OAuth token, user profile, and a ledger backup stored in your Drive when enabled | https://policies.google.com/privacy |
 | **Google AdMob** | Device identifiers, ad interactions | https://policies.google.com/privacy |
 | **OpenAI** | Voice assistant transcript (transient) | https://openai.com/privacy |
 
@@ -58,10 +56,10 @@ When you sign in with Google, we receive your name, email address, and profile p
 
 ## 5. Data Storage and Retention
 
-- **On-device** — all ledger data is stored locally in AsyncStorage on your device. This is the primary copy.
-- **Cloud backup** — when signed in, data is synced to Supabase as a cloud backup. You can delete your account data by signing out with the "back up and remove" option, which pushes data to the cloud and then removes it from the device.
+- **On-device** — ledger data is stored locally on your device. This is the primary copy. Android system backup may restore app data only when device backup/transfer is enabled and succeeds; it is not guaranteed.
+- **Business profiles** — multiple business profiles can be kept under one signed-in account. Each profile has its own ledger and Drive backup.
+- **Google Drive backup** — when Google sign-in and Drive access are available, the first registered device checks each active business backup when opened and uploads at most once per local day. Other devices can upload when the user requests a manual backup. Sign in again with the same Google account after reinstalling to restore an existing backup. A backup cannot restore data that was never uploaded before uninstalling.
 - **Voice transcripts** — not stored beyond the current session.
-- **Subscriptions** — billing records are maintained by Apple / Google and RevenueCat per their policies.
 
 ---
 
@@ -69,7 +67,6 @@ When you sign in with Google, we receive your name, email address, and profile p
 
 - **Access and export** — all data is stored locally; you can export it from the app.
 - **Delete** — delete your account in Settings, which removes your auth user from Supabase and clears local data; sign out with "back up and remove" to delete local data only.
-- **Unsubscribe** — manage or cancel your subscription from the app or from your Apple / Google account.
 - **Withdraw consent** — you can revoke Google account access from your Google account settings.
 
 ---
@@ -88,5 +85,4 @@ If we change this policy, we will update the "Last updated" date above and, for 
 
 ## 9. Contact
 
-**support@credeasy.app**
-Website: https://credeasy.app
+**help.credeasy@gmail.com**

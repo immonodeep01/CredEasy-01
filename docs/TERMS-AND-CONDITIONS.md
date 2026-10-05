@@ -41,21 +41,9 @@ You agree NOT to:
 
 Your use of CredEasy is also governed by our Privacy Policy. Please review it at [Privacy Policy URL]. By using the App, you consent to our data practices as described in the Privacy Policy.
 
-## 6. Subscriptions and Payments
+## 6. Pricing and Advertising
 
-### 6.1 Free Trial
-- New users receive a 14-day free trial
-- No payment information required during trial
-
-### 6.2 Paid Plans
-- Subscriptions are billed monthly in advance
-- Prices are displayed in Indian Rupees (₹)
-- Subscription renewals are automatic unless cancelled
-- You can cancel anytime through the app or your app store account
-
-### 6.3 Refunds
-- All purchases are subject to the refund policies of the Apple App Store or Google Play Store
-- We do not process direct refunds
+CredEasy is currently free to use and does not offer paid subscriptions or free trials. The App may display advertisements served by Google AdMob.
 
 ## 7. Intellectual Property
 
@@ -70,13 +58,15 @@ Your use of CredEasy is also governed by our Privacy Policy. Please review it at
 ## 8. Data Backup
 
 ### 8.1 Local Storage
-- All data is primarily stored locally on your device
-- You are responsible for backing up your data
+- Ledger data is primarily stored locally on your device
+- Android system backup may restore app data only when device backup/transfer is enabled and succeeds; it is not guaranteed
+- Offline-only data has no CredEasy cloud sync or Google Drive backup
 
 ### 8.2 Cloud Sync
-- When signed in, data is synced to cloud backup
-- Cloud sync is provided as a convenience feature
-- We do not guarantee uninterrupted cloud availability
+- Google Drive backups are available after signing in with Google and granting Drive access
+- Automatic backup and restore depend on successful Google Drive access; verify the last backup time in the App
+- Supabase cloud sync is best-effort and is not the reinstall-recovery path
+- We do not guarantee uninterrupted cloud availability or recovery of data that was never backed up
 
 ## 9. Limitation of Liability
 
@@ -122,12 +112,12 @@ If any provision of these Terms is found unenforceable, the remaining provisions
 ## 16. Contact Information
 
 For questions about these Terms, contact us at:
-- Email: [support@credeasy.app]
+- Email: help.credeasy@gmail.com
 - Website: [https://credeasy.app]
 
 ## 17. Third-Party Services
 
-The App may include links to third-party services (Google Sign-In, Supabase, RevenueCat). These services are governed by their own terms and privacy policies.
+The App may use third-party services including Google Sign-In, Google Drive, Supabase, and Google AdMob. These services are governed by their own terms and privacy policies.
 
 ## 18. Children's Use
 

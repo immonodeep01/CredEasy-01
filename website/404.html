@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, follow" />
+  <meta name="theme-color" content="#f6f5ef" />
+  <title>Page not found | CredEasy</title>
+  <link rel="icon" type="image/png" href="assets/credeasy-mark.png" />
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: #f6f5ef;
+      --surface: #fffefa;
+      --ink: #18241b;
+      --muted: #59665c;
+      --brand: #155e3b;
+      --line: #d9ddd2;
+      font-family: "Aptos", "Segoe UI", system-ui, sans-serif;
+      background: var(--page);
+      color: var(--ink);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --page: #111913;
+        --surface: #18221b;
+        --ink: #f0f4ee;
+        --muted: #b3c0b5;
+        --brand: #91d8ad;
+        --line: #344239;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { display: grid; min-height: 100vh; min-height: 100dvh; margin: 0; place-items: center; padding: 24px; }
+    main { width: min(100%, 620px); border: 1px solid var(--line); border-radius: 20px; padding: clamp(28px, 7vw, 56px); background: var(--surface); }
+    img { width: 48px; height: 48px; border-radius: 12px; }
+    p { color: var(--muted); line-height: 1.65; }
+    h1 { margin: 28px 0 12px; font-size: clamp(2.5rem, 9vw, 4.5rem); letter-spacing: -.06em; line-height: 1; }
+    a { display: inline-flex; min-height: 48px; align-items: center; margin-top: 14px; border-radius: 999px; padding: 0 20px; background: var(--brand); color: #fff; font-weight: 700; text-decoration: none; }
+    a:focus-visible { outline: 3px solid var(--brand); outline-offset: 4px; }
+  </style>
+</head>
+<body>
+  <main>
+    <a href="/" aria-label="CredEasy home"><img src="assets/credeasy-mark.png" alt="CredEasy" width="48" height="48" /></a>
+    <h1>We can’t find that page.</h1>
+    <p>The address may have changed, or the page may no longer be here. Return to CredEasy to find the website and support links.</p>
+    <a href="/">Go to CredEasy</a>
+  </main>
+</body>
+</html>

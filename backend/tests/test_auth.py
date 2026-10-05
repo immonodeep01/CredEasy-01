@@ -530,7 +530,7 @@ class TestProtectedRoutes:
         }
         assert captured["audio_config"] == {
             "audio_encoding": "MP3",
-            "speaking_rate": 1.05,
+            "speaking_rate": 0.98,
         }
 
         response = client.post(
@@ -545,7 +545,7 @@ class TestProtectedRoutes:
         }
         assert captured["audio_config"] == {
             "audio_encoding": "MP3",
-            "speaking_rate": 1.05,
+            "speaking_rate": 0.98,
         }
 
     def test_voice_speak_detects_hindi_reply_when_ui_language_is_english(
@@ -576,6 +576,92 @@ class TestProtectedRoutes:
         assert response.status_code == 200
         assert response.headers["x-credeasy-tts-language"] == "hi-IN"
         assert captured["voice"]["name"] == "hi-IN-Chirp3-HD-Puck"
+
+    def test_voice_speak_converts_rupee_amounts_to_spoken_words(self, client, monkeypatch):
+        monkeypatch.setitem(
+            client.app.dependency_overrides,
+            server.get_authenticated_user,
+            lambda: {"user_id": SUPABASE_USER_PAYLOAD["id"]},
+        )
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+        captured = {}
+
+        class FakeTtsClient:
+            async def synthesize_speech(self, request):
+                captured.update(request)
+                return type("SynthesizeResponse", (), {"audio_content": b"\x01" * 256})()
+
+        monkeypatch.setattr(server, "get_google_tts_client", lambda: FakeTtsClient())
+        response = client.post(
+            "/api/voice/speak",
+            json={"text": "Ravi ka balance ₹2,350 hai.", "lang": "en"},
+        )
+        assert response.status_code == 200
+        assert captured["input"]["text"] == "Ravi ka balance two thousand three hundred fifty rupees hai."
+
+        response = client.post(
+            "/api/voice/speak",
+            json={"text": "रवि का बकाया ₹2,350.50 है।", "lang": "hi"},
+        )
+        assert response.status_code == 200
+        assert captured["input"]["text"] == "रवि का बकाया दो हज़ार तीन सौ पचास रुपये पचास पैसे है।"
+
+        response = client.post(
+            "/api/voice/speak",
+            json={"text": "Your balance is ₹46,500.", "lang": "en"},
+        )
+        assert response.status_code == 200
+        assert captured["input"]["text"] == "Your balance is forty six thousand five hundred rupees."
+
+        response = client.post(
+            "/api/voice/speak",
+            json={
+                "text": "Your balance is ₹66,254; the fee is ₹1,265 and tax is ₹1.",
+                "lang": "en",
+            },
+        )
+        assert response.status_code == 200
+        assert captured["input"]["text"] == (
+            "Your balance is sixty six thousand two hundred fifty four rupees; "
+            "the fee is one thousand two hundred sixty five rupees and tax is one rupee."
+        )
+
+        response = client.post(
+            "/api/voice/speak",
+            json={"text": "Collect 66,254 rupees from Ravi.", "lang": "en"},
+        )
+        assert response.status_code == 200
+        assert captured["input"]["text"] == (
+            "Collect sixty six thousand two hundred fifty four rupees from Ravi."
+        )
+
+        response = client.post(
+            "/api/voice/speak",
+            json={"text": "आपका बकाया ₹46,500 है।", "lang": "hi"},
+        )
+        assert response.status_code == 200
+        assert captured["input"]["text"] == "आपका बकाया छियालीस हज़ार पाँच सौ रुपये है।"
+
+        response = client.post(
+            "/api/voice/speak",
+            json={"text": "आपका बकाया ₹66,254 है।", "lang": "hi"},
+        )
+        assert response.status_code == 200
+        assert captured["input"]["text"] == "आपका बकाया छियासठ हज़ार दो सौ चौवन रुपये है।"
+
+        response = client.post(
+            "/api/voice/speak",
+            json={"text": "Your balance is 46,500 rupees.", "lang": "en"},
+        )
+        assert response.status_code == 200
+        assert captured["input"]["text"] == "Your balance is forty six thousand five hundred rupees."
+
+        response = client.post(
+            "/api/voice/speak",
+            json={"text": "The recorded amount is 46,500.", "lang": "en"},
+        )
+        assert response.status_code == 200
+        assert captured["input"]["text"] == "The recorded amount is forty six thousand five hundred."
 
     def test_voice_speak_does_not_fallback_after_configured_google_fails(
         self, client, monkeypatch

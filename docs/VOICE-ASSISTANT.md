@@ -17,9 +17,13 @@ the backend. Do not put provider credentials in the mobile app.
 
 On native builds, transcription uses Speech-to-Text v2's `chirp_3` streaming
 recognition with 16 kHz mono PCM frames, interim results, and client-side
-adaptive voice-activity detection. The microphone sends a short preroll plus
-speech frames, then ends the stream after 1.4 seconds of silence to avoid
-cutting off natural pauses. PCM stays in memory during
+adaptive voice-activity detection. The detector calibrates over a rolling
+five-second noise window, requires several consecutive frames above the
+noise-relative onset threshold, and uses hysteresis to avoid treating steady
+background noise as ongoing speech. It ends the stream after 850 ms of detected
+silence. The minimum speech-onset RMS is 0.0025 for quiet-room speech, while
+the rolling noise-relative threshold and three consecutive onset frames still
+filter steady background noise. PCM stays in memory during
 streaming; if the WebSocket is unavailable, the app writes a temporary WAV in
 its private cache, uploads it, and deletes it after the request. The native stream
 requires a development or production build that includes
@@ -43,13 +47,25 @@ streaming cannot establish its WebSocket connection, Chotu continues capturing
 the same 16 kHz PCM stream, wraps it in WAV, and submits it to
 `/api/voice/transcribe`; this uses Google Cloud when configured and does not
 switch providers after a configured Google failure. Automatic pause detection
-uses a short preroll and adaptive noise floor, without polling Expo's recorder
-after native capture stops. While Chotu speaks, capture restarts so user speech
-interrupts playback and supersedes the previous assistant turn.
+uses a short preroll, an adaptive noise floor, a lower bounded onset threshold,
+and a multi-frame speech-activity gate. Brief background sounds and energy below
+the calibrated speech threshold no longer refresh the end-of-speech timer,
+while quieter speech remains detectable. This avoids waiting indefinitely on
+intermittent noise without polling Expo's recorder after native capture stops.
+Microphone capture remains stopped throughout TTS playback and resumes after
+the reply finishes; user speech is not captured over Chotu's response.
 
 Synthesis uses Cloud Text-to-Speech and returns MP3 audio. Hindi replies use
 Google's male Indian `hi-IN-Chirp3-HD-Puck` voice and Indian-English replies
-use male `en-IN-Chirp3-HD-Puck`, both at a natural speaking rate of 1.05.
+use male `en-IN-Chirp3-HD-Puck`, both at a measured speaking rate of 0.98.
+Explicit rupee amounts are converted into language-matched Indian number words
+before synthesis, including paise, so balances and transaction values are
+spoken clearly instead of being read as grouped digits or a currency symbol.
+Grouped numbers without a currency marker are also expanded to number words so
+the speech engine does not treat a thousands separator as a spoken pause (for
+example, `46,500` becomes “forty six thousand five hundred” and `₹66,254`
+becomes “sixty six thousand two hundred fifty four rupees”). These backend TTS
+changes require deploying the updated backend before they reach users.
 Hindi is selected from the spoken reply's Devanagari text even when the app UI
 language is English. The response includes non-secret provider, language and
 voice headers; the app logs these so a stale deployment or legacy TTS fallback
@@ -59,6 +75,17 @@ isolated to web; native screens only use the PCM capture recorder. A silent
 native listen retries while the user-started conversation remains active.
 These backend-side voice changes require deploying the backend as well as
 installing the updated app.
+
+## Voice party creation
+
+When a user explicitly asks Chotu to add a party by name, the backend emits a
+party-creation action directly. The app requests Contacts access only for that
+party-creation flow, checks the complete readable contact list for an exact
+normalized name match, and uses a single matching Indian mobile number
+automatically. If access is denied or there is no exact match, Chotu asks for a
+10-digit number or “skip”. Ledger entry and edit flows do not request Contacts
+access. Microphone permission is requested only when the user starts recording,
+as required by Android.
 
 ## Gemini
 

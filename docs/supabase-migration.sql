@@ -44,6 +44,7 @@ create table business_profiles (
     owner_phone text default '',
     gstin       text default '',
     upi_id      text default '',
+    profile_data jsonb not null default '{}'::jsonb,
     updated_at  timestamptz default now(),
     unique (user_id)
 );

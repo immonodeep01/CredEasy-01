@@ -75,7 +75,7 @@ yarn install
 
 ### 3.2 Set up environment
 
-Copy the env template into `frontend/.env`. The file is gitignored — never commit it. Required keys:
+Copy the env template into `frontend/.env`. This local file is gitignored and remains on your machine; never commit it. Required keys:
 
 ```
 EXPO_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
@@ -87,6 +87,8 @@ EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY=appl_xxx
 ```
 
 `EXPO_PUBLIC_*` vars are baked into the JavaScript bundle when the bundler starts. Every time you edit `.env`, restart Metro with `npx expo start -c` (the `-c` clears the cache, otherwise you debug a stale value).
+
+For EAS builds, add the required app build variables to the EAS `production` and/or `preview` environment in the Expo dashboard. Local `.env` files are intentionally excluded from source control and are not a substitute for configuring EAS build environments. Never put server-only keys in `EXPO_PUBLIC_*` variables.
 
 ### 3.3 Prebuild native folders (first time only)
 
@@ -164,11 +166,13 @@ adb install -r android/app/build/outputs/apk/release/app-release.apk
 
 This release is **still signed with the debug key** until you generate a real release keystore (see `docs/PLAY-STORE-SETUP.md` §3). The APK runs without Metro, but cannot be uploaded to Play Store.
 
+Android's app-data backup rules include the local ledger and app-owned image files, excluding SecureStore credentials. Offline-only recovery after reinstall depends on Android device backup or device transfer being enabled and completing successfully; Android can enforce backup quotas and does not guarantee a restore. Signed-in cloud users can restore their ledger after signing back into the same account, once the updated `docs/enable-transaction-realtime.sql` has been applied to Supabase.
+
 ---
 
 ## 6. Production Build (Cloud)
 
-The cleanest path to a Play-Store-ready AAB is EAS Build. It runs on Expo's cloud infrastructure, handles signing, and produces an `.aab` (Android App Bundle).
+The cleanest path to a Play-Store-ready AAB is EAS Build. It runs on Expo's cloud infrastructure, handles signing, and the `production` profile produces an `.aab` (Android App Bundle). The `preview` profile produces an installable APK for QA.
 
 ### 6.1 One-time setup
 
@@ -260,6 +264,7 @@ Once the app is on your device:
 
 1. Open it — first run goes through onboarding (business profile setup).
 2. Add a test party and a transaction to verify the local ledger works.
-3. To test cloud sync, configure `EXPO_PUBLIC_SUPABASE_URL` and `EXPO_PUBLIC_SUPABASE_ANON_KEY` in `frontend/.env` and ensure the Supabase schema in `docs/supabase-migration.sql` has been applied. **Note:** per `CLAUDE.md`, cloud sync is intentionally broken at the architecture level — sign-in is required but data round-trips have known issues. Do not "fix" sign-out data clearing.
-4. To test subscriptions, configure RevenueCat env vars and the three product IDs (`basic_monthly`, `adfree_monthly`, `premium_monthly`) in your RevenueCat dashboard.
-5. To test the AdMob Basic tier banner, the app must be on a paid tier or trial and `__DEV__` must be false. In dev, you see a Google test banner regardless.
+3. To verify reinstall recovery, sign in with Google, grant Drive access, add a party and transaction, then sign in with the same Google account on a clean install.
+4. Subscription billing and the 14-day trial have been removed. The app is free and ad-supported.
+5. Native AdMob placements currently use Google's test app and unit IDs on all devices by project requirement; they display test ads, not monetized production ads.
+6. A locally built release APK uses the Android debug signing key and is for QA only. Use the EAS production AAB with production signing credentials for Play Store release.

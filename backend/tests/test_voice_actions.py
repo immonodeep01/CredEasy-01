@@ -68,3 +68,18 @@ def test_navigation_actions_only_accept_supported_app_routes():
         {"type": "NAVIGATE", "route": "inventory"},
         {"type": "NAVIGATE", "route": "daybook"},
     ]
+
+
+def test_add_party_keeps_a_valid_opening_balance():
+    assert server.sanitize_actions([{
+        "type": "ADD_PARTY",
+        "name": "  Asha Stores  ",
+        "openingBalance": 1250.5,
+        "phone": "9876543210",
+    }]) == [{
+        "type": "ADD_PARTY",
+        "name": "Asha Stores",
+        "phone": "9876543210",
+        "openingBalance": 1250.5,
+        "partyType": "CUSTOMER",
+    }]

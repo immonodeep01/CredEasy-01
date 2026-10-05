@@ -34,11 +34,11 @@ Re-audit of the codebase confirmed several items from the original list are **al
 | 8 | Invoice Numbering | **Not done** — bills use random `newId('bill')`. Still valid. | `mock.ts:Bill` |
 | 9 | Multi-Currency | **Not done** — `formatMoney()` INR-only. Still valid. | `utils/ledger.ts` |
 | 10 | Hindi Number Input (Words-to-Digits) | **Not done** — backend already does this for voice. Still valid for typed input. | `add-transaction.tsx` |
-| 11 | JSON Backup/Restore | **Not done** — critical given cloud sync is broken. Still valid. | `storage-service.ts` |
+| 11 | Google Drive Backup/Restore | **Done** — signed-in users' ledger changes are backed up and restored on a clean install. | `google-drive.ts`, `useAutoBackup.ts` |
 | 12 | Dark Mode | **Not done** — token system in place, just not exposed. Still valid. | `utils/colors.ts` |
 | 13 | Transaction Categories | **Not done**. Still valid. | `mock.ts:Transaction` |
 | 14 | Transaction Editing | **Not done**. Still valid. | `add-transaction.tsx` |
-| 15 | Local Notification Reminders | **Not done** — `expo-notifications` not in deps. Still valid. | `package.json` |
+| 15 | Local Notification Reminders | **Partial** — `expo-notifications` permission/scheduling helpers exist, but there is no current UI call to schedule a follow-up. The in-app notification center is separate. | `src/utils/notifications.ts`, `app/notifications.tsx` |
 | 16 | Customer Photo / Avatar | **Not done** — `photoUri?` field exists in `Party` type but no UI. Still valid. | `mock.ts:Party`, `add-party.tsx` |
 | 17 | Recurring Transactions | **Not done**. Still valid. | — |
 | 18 | Inventory Tracking | **Not done**. Still valid (large scope). | — |
@@ -50,9 +50,9 @@ Re-audit of the codebase confirmed several items from the original list are **al
 
 These shipped but were never added to FEATURES.md — captured for completeness:
 
-- **PDF/DOCX Ledger Import** — `POST /api/import/parse` extracts parties/transactions from uploaded documents, reviewed before commit. Differentiator vs OkCredit/Khatabook which don't offer this.
-- **PDF Statement Export per Party** — Premium-gated, `partyStatementHtml()` generates formatted PDF for a single party.
-- **Edge TTS Voice Replies** — Voice assistant speaks back in Hindi (`hi-IN-SwaraNeural`) or English (`en-US-JennyNeural`); `gpt-4o-mini-tts` as fallback.
+- **Previous Ledger Import** — Onboarding accepts CSV files only. UTF-8/Western-encoded CSV parsing runs on-device, supports common ledger headers and CredEasy compacted multi-table exports, and shows all parsed rows for review before saving. PDF and Excel import options are not exposed. OkCredit backup-summary CSVs import party rows and signed current balances as opening balances; these exports contain no transaction history.
+- **PDF Statement Export per Party** — `partyStatementHtml()` generates a formatted PDF for a single party; PDF export is available to all users.
+- **Multilingual Voice Assistant** — Chotu replies use Gemini 2.5 Flash-Lite when `GEMINI_API_KEY` is set. Native speech uses Google Cloud Speech-to-Text v2 `chirp_3` streaming with 16 kHz mono PCM, interim results, and adaptive client-side VAD; web speech retains automatic decoding of audio uploads. Speech synthesis uses Google Cloud Text-to-Speech and returns MP3. Setup steps and required IAM roles are in [VOICE-ASSISTANT.md](./VOICE-ASSISTANT.md). Existing speech providers remain fallbacks only while Google Cloud is unconfigured; configured Google failures are surfaced without provider switching. After the user starts a mic session, the native stream ends each utterance after a detected pause and Chotu resumes listening after spoken replies; silence-only captures and overlong utterances are bounded. Keep all provider credentials server-side, never in the mobile app.
 - **App PIN + Biometric Lock** — `AppLockScreen` + `expo-secure-store` with AsyncStorage fallback.
 - **Google Sign-In (Supabase OAuth)** — Profile avatar, name, email displayed in Settings.
 - **Receipt/Bill photo attachment on transactions** — `Transaction.photoUri?` field exists in `mock.ts:25` but no UI.
@@ -165,13 +165,12 @@ These require more work but unlock meaningful functionality.
 - **Complexity:** Low — ~30-line utility function, integration in one screen.
 - **Rationale:** The voice assistant already converts Hindi number words server-side. This brings the same capability to typed input. Helpful for the "1.5 lakh" / "दो हजार" typing style common in Indian commerce.
 
-### 11. JSON Backup/Restore
+### 11. Google Drive Backup/Restore
 
-- **Description:** Export all ledger data as a single JSON file; re-import to restore or migrate to a new device.
-- **Value Proposition:** With cloud sync deliberately broken (per CLAUDE.md), a local JSON backup is the only recovery path. Users upgrading phones need a way to transfer data. Hisaabo exports `.tar.gz` archives, Acclo IQ exports `.json.gz`, Sahab Budget exports JSON — all are standard for this category.
-- **Integration:** Add `exportAllData()` and `importAllData()` to `storage-service.ts`. Export: serialize all AsyncStorage keys (parties, transactions, bills, profile, language, PIN hashes, trial date) to a single JSON object, write via `FileSystem`. Import: parse JSON, validate schema, write back to AsyncStorage keys. Add buttons in Settings under "Data Management." Add confirmation modal that warns "Importing will replace all current data" with a PIN gate.
-- **Complexity:** Medium — file I/O, validation, conflict handling (~100 lines).
-- **Rationale:** Storage keys are already named and structured (`@hisab_parties_v1`, etc.). The import is the inverse of the export. The PIN gate reuses existing `SecurityPinModal`. This is critical given that cloud sync is broken.
+- **Status:** Implemented. The first device to claim automatic backup ownership for an account checks the shared Drive file when the app opens and uploads at most once per local calendar day. Other devices display the shared backup status and upload only through the manual Back up now action. A backup is restored when a clean install signs into the same Google account.
+- **Recovery requirement:** A backup must have been created before uninstalling. Google Drive access is requested during Google sign-in; automatic backups use a securely stored refresh token when Google provides one.
+- **Setup:** Run the additive `docs/enable-transaction-realtime.sql` in Supabase to register one automatic-backup device per account.
+- **Implementation:** `src/lib/google-drive.ts`, `src/hooks/useAutoBackup.ts`, `app/_layout.tsx`, and `claim_drive_backup_device` in the Supabase setup SQL.
 
 ### 12. Dark Mode
 
@@ -306,10 +305,10 @@ Patterns that appear in nearly every competitor and would benefit CredEasy:
 
 **What's a CredEasy differentiator (most competitors don't have these):**
 - Voice assistant in Hindi/English/Hinglish (already built but needs action dispatch — #2)
-- PDF/DOCX ledger import (already built per handoff log)
-- No-login trial experience (already in place via trial start)
+- PDF/DOCX/CSV ledger import (text PDFs, structured tables, and review-before-save)
+- Free, ad-supported app with no subscription or time-limited trial
 
-**What's a premium upsell opportunity:**
+**Potential future product features:**
 - Multi-currency (#9)
 - Dark mode (#12) — or could be free to compete
 - Aging report (#20)
@@ -439,18 +438,6 @@ Fresh research against the current generation of competitors surfaced several fe
 - **Complexity:** Low — small data model change, threshold coloring, one new tile.
 - **Why Now:** Aukra markets this aggressively; it's a thin add to CredEasy.
 
-### N6. Bulk SMS / WhatsApp Reminder to All Overdue Parties (MEDIUM VALUE)
-
-- **Description:** A "Remind All Overdue" button on the dashboard that opens WhatsApp Web/App with all overdue-party messages queued (or sends SMS via `expo-sms`).
-- **Competitor:** OkCredit's "Send reminders to all" one-tap action. Khatabook's batch reminder. BizBeat's collection campaigns.
-- **Value Proposition:** The current "Remind" is per-party. For a shopkeeper with 30 overdue parties at month-end, that's 30 taps. One-tap batch is a real time-saver and the natural monetization surface ("Send 100 reminders/mo — Pro feature").
-- **Integration:**
-  - `Linking.openURL('whatsapp://send?text=...')` only opens a single chat. For multi-recipient, use a loop that opens sequentially with a small delay (or opens WhatsApp Web with a generated CSV).
-  - Simpler MVP: build a multi-select on the dashboard, then loop `Linking.openURL` with throttling.
-  - Better: generate a per-party "reminder card" image (uses existing PDF pipeline or a small canvas) and pre-fill WhatsApp with it.
-- **Complexity:** Medium — UX design of multi-select + throttled opening or a true multi-recipient SMS gateway integration.
-- **Why Now:** Khatabook's "free batch reminder" was historically their #1 growth hook. OkCredit copied it. Aukra now offers it as "AI-powered voice calls for persistent cases" — i.e., they automated the phone-call follow-up too. CredEasy can ship a simpler version fast.
-
 ### N7. AI Voice Calls for Persistent Overdue (LOW-MEDIUM VALUE, niche)
 
 - **Description:** When a WhatsApp reminder goes unread for X days, offer to place an AI-voice call to the customer (in Hindi) that reads the balance and asks for a payment date.
@@ -496,7 +483,7 @@ Fresh research against the current generation of competitors surfaced several fe
   - Add `creditDays?: number` to `Party` type.
   - In `partyBalance()` or a new `daysOverCredit(party, txs)` helper, compute the age of the oldest un-CREDITed DEBIT.
   - Dashboard widget "Credit Days Expired" with count + list (similar to N4's pattern).
-  - Pair with N6's "Remind All Overdue" for a complete collections workflow.
+  - Pair with individual WhatsApp reminders for a complete collections workflow.
 - **Complexity:** Low — small data model + one helper + one widget.
 - **Why Now:** Pairs naturally with the existing `REMIND` action and WhatsApp share. Could ship in the same week as N5/N6.
 
@@ -529,7 +516,7 @@ Fresh research against the current generation of competitors surfaced several fe
 
 Three things that came up repeatedly across 2025-2026 competitor updates that aren't single features but worth noting:
 
-1. **AI is now table-stakes, not premium.** Aukra, Khatabook (interest calculator), BizBeat, VoiceKhata, AiXpense all ship AI features on the free tier. CredEasy's voice assistant is already genuinely strong but should be marketed as AI-first, not as a Premium feature. Consider promoting it from the paywall.
+1. **AI is now table-stakes.** Aukra, Khatabook (interest calculator), BizBeat, VoiceKhata, and AiXpense all ship AI features on the free tier. CredEasy's voice assistant is already genuinely strong and should be marketed as AI-first.
 
 2. **Auto-reminders + auto-collections are the new battleground.** Aukra and Khatabook are pushing hard on "you don't need to chase — we do." CredEasy's REMIND action is a one-shot; competitors are doing scheduled, batch, and AI-call follow-ups. N6 + N10 + N7 form a complete story; even shipping N6 + N10 alone is a major UX upgrade.
 

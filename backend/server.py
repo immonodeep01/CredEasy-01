@@ -13,6 +13,7 @@ import json
 import math
 import os
 import logging
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -141,7 +142,7 @@ MAX_RATE_LIMIT_BUCKETS = 10_000
 UPSTREAM_TIMEOUT_SECONDS = 10.0
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
 MAX_TRANSCRIPT_LEN = 2000
-MAX_CONTEXT_CHARS = 64 * 1024
+MAX_CONTEXT_CHARS = 256 * 1024
 MAX_REPLY_LEN = 4000
 MAX_ACTIONS = 6
 MAX_NAME_LEN = 100
@@ -811,6 +812,111 @@ async def voice_transcribe(file: UploadFile = File(...), user: dict = Depends(ge
     raise HTTPException(status_code=502, detail="Could not transcribe the recording. Please try again.")
 
 
+_CURRENCY_AMOUNT_RE = re.compile(
+    r"(?P<prefix>₹|INR\b|Rs\.?)\s*(?P<prefix_amount>\d[\d,]*(?:\.\d{1,2})?)"
+    r"|(?P<suffix_amount>\d[\d,]*(?:\.\d{1,2})?)\s*"
+    r"(?P<suffix>rupees?|INR\b|रुपये|रुपया|रु\.?)",
+    re.IGNORECASE,
+)
+_GROUPED_NUMBER_RE = re.compile(
+    r"(?<![\w,])\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?(?![\w,])"
+)
+_ENGLISH_ONES = (
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+    "seventeen", "eighteen", "nineteen",
+)
+_ENGLISH_TENS = (
+    "", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+)
+_HINDI_NUMBERS = (
+    "शून्य", "एक", "दो", "तीन", "चार", "पाँच", "छह", "सात", "आठ", "नौ",
+    "दस", "ग्यारह", "बारह", "तेरह", "चौदह", "पंद्रह", "सोलह", "सत्रह", "अठारह", "उन्नीस",
+    "बीस", "इक्कीस", "बाईस", "तेईस", "चौबीस", "पच्चीस", "छब्बीस", "सत्ताईस", "अट्ठाईस", "उनतीस",
+    "तीस", "इकतीस", "बत्तीस", "तैंतीस", "चौंतीस", "पैंतीस", "छत्तीस", "सैंतीस", "अड़तीस", "उनतालीस",
+    "चालीस", "इकतालीस", "बयालीस", "तैंतालीस", "चवालीस", "पैंतालीस", "छियालीस", "सैंतालीस", "अड़तालीस", "उनचास",
+    "पचास", "इक्यावन", "बावन", "तिरपन", "चौवन", "पचपन", "छप्पन", "सत्तावन", "अट्ठावन", "उनसठ",
+    "साठ", "इकसठ", "बासठ", "तिरसठ", "चौंसठ", "पैंसठ", "छियासठ", "सड़सठ", "अड़सठ", "उनहत्तर",
+    "सत्तर", "इकहत्तर", "बहत्तर", "तिहत्तर", "चौहत्तर", "पचहत्तर", "छिहत्तर", "सतहत्तर", "अठहत्तर", "उन्नासी",
+    "अस्सी", "इक्यासी", "बयासी", "तिरासी", "चौरासी", "पचासी", "छियासी", "सतासी", "अट्ठासी", "नवासी",
+    "नब्बे", "इक्यानवे", "बानवे", "तिरानवे", "चौरानवे", "पंचानवे", "छियानवे", "सत्तानवे", "अट्ठानवे", "निन्यानवे",
+)
+
+
+def _number_words_en(number: int) -> str:
+    if number < 20:
+        return _ENGLISH_ONES[number]
+    if number < 100:
+        return _ENGLISH_TENS[number // 10] + (f" {_ENGLISH_ONES[number % 10]}" if number % 10 else "")
+    if number < 1_000:
+        remainder = number % 100
+        return f"{_ENGLISH_ONES[number // 100]} hundred" + (
+            f" {_number_words_en(remainder)}" if remainder else ""
+        )
+    for unit, divisor in (("crore", 10_000_000), ("lakh", 100_000), ("thousand", 1_000)):
+        if number >= divisor:
+            quotient, remainder = divmod(number, divisor)
+            words = f"{_number_words_en(quotient)} {unit}"
+            return f"{words} {_number_words_en(remainder)}" if remainder else words
+    return str(number)
+
+
+def _number_words_hi(number: int) -> str:
+    if number < 100:
+        return _HINDI_NUMBERS[number]
+    if number < 1_000:
+        quotient, remainder = divmod(number, 100)
+        words = f"{_HINDI_NUMBERS[quotient]} सौ"
+        return f"{words} {_number_words_hi(remainder)}" if remainder else words
+    for unit, divisor in (("करोड़", 10_000_000), ("लाख", 100_000), ("हज़ार", 1_000)):
+        if number >= divisor:
+            quotient, remainder = divmod(number, divisor)
+            words = f"{_number_words_hi(quotient)} {unit}"
+            return f"{words} {_number_words_hi(remainder)}" if remainder else words
+    return str(number)
+
+
+def format_currency_for_speech(text: str, language_code: str) -> str:
+    """Speak explicitly marked rupee values as words instead of reading digits."""
+    to_words = _number_words_hi if language_code == "hi-IN" else _number_words_en
+
+    def replace_amount(match: re.Match[str]) -> str:
+        raw_amount = match.group("prefix_amount") or match.group("suffix_amount") or ""
+        normalized = raw_amount.replace(",", "")
+        try:
+            whole, _, fraction = normalized.partition(".")
+            rupees = int(whole)
+            paise = int(fraction.ljust(2, "0")) if fraction else 0
+        except (ValueError, OverflowError):
+            return match.group(0)
+
+        if rupees > 999_999_999_999:
+            return match.group(0)
+
+        if language_code == "hi-IN":
+            spoken = f"{to_words(rupees)} रुपये"
+            if paise:
+                spoken += f" {to_words(paise)} पैसे"
+        else:
+            rupee_label = "rupee" if rupees == 1 and not paise else "rupees"
+            spoken = f"{to_words(rupees)} {rupee_label}"
+            if paise:
+                spoken += f" and {to_words(paise)} paise"
+        return spoken
+
+    text = _CURRENCY_AMOUNT_RE.sub(replace_amount, text)
+
+    def replace_grouped_number(match: re.Match[str]) -> str:
+        whole, _, fraction = match.group(0).replace(",", "").partition(".")
+        spoken = to_words(int(whole))
+        if fraction:
+            decimal_word = "दशमलव" if language_code == "hi-IN" else "point"
+            spoken += f" {decimal_word} " + " ".join(to_words(int(digit)) for digit in fraction)
+        return spoken
+
+    return _GROUPED_NUMBER_RE.sub(replace_grouped_number, text)
+
+
 @api_router.post("/voice/speak")
 async def voice_speak(payload: SpeakRequest, user: dict = Depends(get_authenticated_user)):
     """Synthesize text to speech and return validated MP3 bytes."""
@@ -819,13 +925,12 @@ async def voice_speak(payload: SpeakRequest, user: dict = Depends(get_authentica
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")
-    text = text[:2000]
-
     is_hindi = (
         payload.lang.lower().startswith("hi")
         or re.search(r"[\u0900-\u097f]", text) is not None
     )
     language_code = "hi-IN" if is_hindi else "en-IN"
+    text = format_currency_for_speech(text[:2000], language_code)
     tts_provider = ""
     tts_voice = ""
     google_project = get_google_cloud_project()
@@ -843,7 +948,7 @@ async def voice_speak(payload: SpeakRequest, user: dict = Depends(get_authentica
                     },
                     "audio_config": {
                         "audio_encoding": "MP3",
-                        "speaking_rate": 1.05,
+                        "speaking_rate": 0.98,
                     },
                 }
             )
@@ -1017,7 +1122,7 @@ You can help with a lot more than just data entry:
 1. CHAT and make small talk — answer greetings, ask how their day/shop is going, tell a quick joke, give encouragement. Keep it brief and warm.
 2. ANSWER questions about the ledger using the CONTEXT provided: e.g. "Ramesh ka kitna baaki hai?", "Aaj kitna hua?", "Kal kitna mila?".
 3. RECORD entries by voice: e.g. "Ramesh ko 500 rupaye udhaar diye" -> add a GAVE transaction of 500 for party Ramesh. Phrase it as a proposal and let the app confirm.
-4. ANSWER inventory questions from CONTEXT and propose a stock movement when the item, quantity, and direction are all explicit. A stock movement is only a proposal; the app will ask the user to confirm before changing stock.
+4. ANSWER inventory questions using all item and movement details in CONTEXT, including stock, prices, SKU, barcode, HSN/SAC, GST, category, cost, location, tax-inclusive settings and movement history. Propose a stock movement only when the item, quantity, and direction are explicit. A stock movement is only a proposal; the app will ask the user to confirm before changing stock.
 5. GUIDE and teach users how to use CredEasy: explain the Ledger, Parties, Billing, Inventory, Daybook, Reports, Profile, and Settings in short steps, then offer to navigate to the relevant screen.
 6. Help users find app features and troubleshoot routine usage. Do not claim to have changed settings, sent messages, made a bill, or saved data unless the app confirms it.
 
@@ -1032,10 +1137,12 @@ Allowed actions (only when the user explicitly asks for them):
   GAVE = shopkeeper gave goods/credit (money receivable); GOT = shopkeeper received payment.
 - {"type":"STOCK_MOVEMENT","itemName":"<exact item name>","quantity":<positive number>,"movementType":"purchase"|"sale"|"return"|"damage"|"adjustment","direction":"increase"|"decrease","note":"<short note or empty>"}
   purchase and return increase stock; sale and damage decrease it. For adjustment, use the direction the user stated.
+- {"type":"ADD_PARTY","name":"<name>","phone":"<phone or empty>","openingBalance":<number or 0>,"partyType":"CUSTOMER"|"SUPPLIER"}
+  Add a party when the user clearly asks to create one. Include a phone only when the user said it, and use 0 opening balance when none was provided. The app checks the full device contact list and asks about a phone number only if no exact contact is found.
 - {"type":"ASK_PARTY_SPELLING","name":"<name as spoken by user>"}
-  When the user says "add Ramesh"-style and the name needs spelling.
+  Legacy only; do not use for a clear party name. Do not ask the user to spell a name they already said clearly.
 - {"type":"SELECT_CONTACT","name":"<spelled name>"}
-  After spelling is confirmed, ask if the contact is in their phone's contact list.
+  Legacy only; contact lookup is handled by the app.
 - {"type":"ASK_OPENING_BALANCE","name":"<name>","phone":"<phone or empty>"}
   After a contact is selected (or skipped), ask whether there's an opening balance.
 - {"type":"ADD_PARTY_COMPLETE","name":"<name>","phone":"<phone>","openingBalance":<number>,"partyType":"CUSTOMER"|"SUPPLIER"}
@@ -1043,7 +1150,7 @@ Allowed actions (only when the user explicitly asks for them):
 - {"type":"NAVIGATE","route":"dashboard"|"parties"|"billing"|"inventory"|"daybook"|"reports"|"settings"}
 - {"type":"REMIND","partyName":"<name>"}
 
-Only emit ADD_TRANSACTION when an amount AND a party are clearly stated; otherwise ask for what is missing. If the user says something vague ("batao", "do something"), ask a clarifying question in the same language before acting — do not guess. Match partyName to the closest existing party name from CONTEXT when possible. For pure questions, answer with numbers from CONTEXT and return an empty actions array. Amounts are Indian rupees; convert words like "paanch sau" to 500. Never invent balances that are not in CONTEXT. When a proposed ledger change is requested, phrase it as a question ("I'll add ₹500 GAVE for Ramesh — should I go ahead?") and never claim it was saved.
+Only emit ADD_TRANSACTION when an amount AND a party are clearly stated; otherwise ask for what is missing. If the user says something vague ("batao", "do something"), ask a clarifying question in the same language before acting — do not guess. Match partyName to the closest existing party name from CONTEXT when possible. For pure questions, answer with values from CONTEXT and return an empty actions array. Amounts are Indian rupees; convert words like "paanch sau" to 500. Whenever a spoken reply contains a money amount, include the ₹ symbol and Indian digit grouping (for example, ₹2,35,000) so text-to-speech can pronounce it clearly. Never invent balances that are not in CONTEXT. When a proposed ledger change is requested, phrase it as a question and never claim it was saved.
 - For sensitive ledger actions, be clear about what you understood; only act when the party, amount, and transaction direction are unambiguous.
 - When requesting an ADD_TRANSACTION action, phrase it as a proposal and never claim it was saved; the app asks the user to confirm before writing it.
 - When requesting a STOCK_MOVEMENT action, phrase it as a proposal and never claim it was saved; the app asks the user to confirm before changing stock.
@@ -1060,6 +1167,8 @@ Allowed actions (0 to 3 items):
    - GAVE = shopkeeper gave goods/credit (money receivable). GOT = shopkeeper received payment.
 {"type":"STOCK_MOVEMENT","itemName":"<exact item name>","quantity":<positive number>,"movementType":"purchase"|"sale"|"return"|"damage"|"adjustment","direction":"increase"|"decrease","note":"<short note or empty>"}
    - purchase and return increase stock; sale and damage decrease it. For adjustment, use the direction the user stated. Never infer a quantity or direction from an ambiguous request.
+{"type":"ADD_PARTY","name":"<name>","phone":"<phone or empty>","openingBalance":<number or 0>,"partyType":"CUSTOMER"|"SUPPLIER"}
+   - Add only on an explicit request. Use the spoken full name and opening balance if given, otherwise 0. The app automatically checks all device contacts for an exact name match.
 {"type":"ASK_PARTY_SPELLING","name":"<name as spoken by user>"}
    - Ask the user to spell the party name letter by letter. Show in reply.
 {"type":"SELECT_CONTACT","name":"<spelled name>"}
@@ -1071,27 +1180,10 @@ Allowed actions (0 to 3 items):
 {"type":"NAVIGATE","route":"dashboard"|"parties"|"billing"|"inventory"|"daybook"|"reports"|"settings"}
 {"type":"REMIND","partyName":"<name>"}
 
-## Multi-step ADD PARTY flow:
-Step 1 — User says "add Ramesh" or "Ramesh ko add karo":
-  → reply: "Ramesh ka spelling batao, ek ek letter bolo." (Hindi)
-  → action: ASK_PARTY_SPELLING with the name
-
-Step 2 — User spells "R A M E S H":
-  → reply: "Ramesh. Kya Ramesh ka phone aapke contact list mein hai?" (Hindi)
-  → action: SELECT_CONTACT with name="RAMESH"
-
-Step 3 — Frontend sends "yes" or "no" or "haan" / "nahi":
-  If yes: frontend shows matching contact cards. User taps one.
-    Frontend sends "Selected: Ramesh, 9876543210"
-    → reply: "9876543210. Kya koi opening balance hai? Amount bolo ya 'nahi' bolo." (Hindi)
-    → action: ASK_OPENING_BALANCE with name and phone
-  If no:
-    → reply: "Kya koi opening balance hai? Amount bolo ya 'nahi' bolo." (Hindi)
-    → action: ASK_OPENING_BALANCE with name, phone empty
-
-Step 4 — User says amount or "nahi":
-  → reply: "Sab theek hai. Ramesh ka khata ban gaya." (Hindi)
-  → action: ADD_PARTY_COMPLETE with name, phone, openingBalance (0 if nahi), partyType (infer from context, default CUSTOMER)
+## ADD PARTY flow:
+- For a clear request such as "add Ramesh as a customer", immediately return ADD_PARTY with the spoken name, stated opening balance (or 0), stated phone (or empty), and inferred party type (default CUSTOMER).
+- Do not ask the user to spell the name or whether it is in contacts. The app searches the complete contact list. If exactly one matching contact is found, it saves the party with that phone. If there is no exact match, the app asks whether to provide a phone number or skip it.
+- If the user did not provide enough information to identify a party name, ask one short clarification instead of emitting ADD_PARTY.
 
 ## Rules:
 - Only emit ADD_TRANSACTION when an amount AND a party are clearly stated. Otherwise ask for what is missing.
@@ -1099,7 +1191,7 @@ Step 4 — User says amount or "nahi":
   Example: user says "Ramesh ko 500 diye" but no Ramesh exists → ask "Kaunsa Ramesh? Ramesh Kumar ya Ramesh Sharma?"
   Example: user says "uska baaki check karo" → ask "Kaunsa customer ka baaki?"
 - Match partyName to the closest existing party name from CONTEXT when possible.
-- For pure questions, answer with numbers from CONTEXT and return an empty actions array.
+- For pure questions, answer with values from CONTEXT and return an empty actions array. Whenever a spoken reply contains a money amount, include the ₹ symbol and Indian digit grouping (for example, ₹2,35,000) so text-to-speech can pronounce it clearly.
 - Amounts are Indian rupees; convert words like "paanch sau" to 500.
 - Never invent balances that are not in CONTEXT.
 """
@@ -1167,10 +1259,12 @@ def sanitize_actions(raw: object) -> List[dict]:
             name = _clean_str(item.get("name"), MAX_NAME_LEN)
             if not name:
                 continue
+            opening_balance = _clean_amount(item.get("openingBalance"))
             actions.append({
                 "type": kind,
                 "name": name,
                 "phone": _clean_str(item.get("phone"), MAX_PHONE_LEN),
+                "openingBalance": opening_balance if opening_balance is not None else 0,
                 "partyType": "SUPPLIER" if item.get("partyType") == "SUPPLIER" else "CUSTOMER",
             })
         elif kind == "ASK_PARTY_SPELLING":
