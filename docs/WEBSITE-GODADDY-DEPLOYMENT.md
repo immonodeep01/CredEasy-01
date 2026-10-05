@@ -37,16 +37,16 @@ allowlisted endpoints.
 2. Enter the public HTTPS origin of the deployed CredEasy FastAPI backend in
    **Admin backend URL** and select **Save Changes** at the bottom of the
    General page. Enter only the origin—no `/api`, `/admin`, credentials, or
-   path. The current API service origin is `https://credeasy-app.onrender.com`;
-   do not use `https://credeasy-01.onrender.com`, which hosts the static site.
+   path. The current API service origin is `https://credeasy-01.onrender.com`;
+   do not use `https://credeasy-app.onrender.com`, which hosts the static site.
    This WordPress setting replaces editing `wp-config.php`; no SFTP access is
    needed.
 3. Before saving it here, open
-   `https://credeasy-app.onrender.com/api/admin/config` directly.
+   `https://credeasy-01.onrender.com/api/admin/config` directly.
    It must return JSON (a structured 503 JSON error is expected if backend
    Supabase variables are not configured); a plain 404 means the admin routes
    have not been deployed to the API service yet. The current
-   `credeasy-app.onrender.com` deployment responds 404 for this route, so deploy
+   `credeasy-01.onrender.com` deployment responds 404 for this route, so deploy
    the repository's backend changes before expecting sign-in to work.
 4. On that backend host, configure `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
    `SUPABASE_SERVICE_ROLE_KEY`, and the comma-separated, verified-owner
