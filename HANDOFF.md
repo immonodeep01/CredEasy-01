@@ -11,6 +11,11 @@
 
 <!-- Add completed features below this line -->
 
+### 2026-10-06 — Add Cloud Run Backend Deployment Pipeline
+**Feature:** Add backend container and Cloud Build configuration for deploying the Android API to Cloud Run.
+**Status:** Configuration added and locally validated; Cloud Build trigger, Artifact Registry repository, IAM grants, and remote deployment require Google Cloud Console access.
+**Summary:** Added a backend-only Docker image build with `.env` exclusion and a root `cloudbuild.yaml` that pushes to Artifact Registry and updates the existing `credeasy-api` service. Documented trigger creation, build/runtime service-account permissions, and post-deployment checks; no credentials are included in source.
+
 ### 2026-10-06 — Tune Ledger Empty State and Reports Navigation
 **Feature:** Fit the empty-ledger illustration to the getting-started layout, remove the Reports backup card, and provide direct return navigation.
 **Status:** Complete — validation and arm64 release build passed.

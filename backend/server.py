@@ -656,6 +656,18 @@ async def voice_transcribe_stream(websocket: WebSocket):
             pass
 
 
+def normalize_gemini_model(model_name: Optional[str]) -> str:
+    if not model_name:
+        return "gemini-2.5-flash-lite"
+    normalized = model_name.strip()
+    legacy_aliases = {
+        "gemini-3.5-flash-lite": "gemini-2.5-flash-lite",
+        "gemini-3.5-flash": "gemini-2.5-flash",
+        "gemini-3.5-pro": "gemini-2.5-pro",
+    }
+    return legacy_aliases.get(normalized, normalized)
+
+
 def get_gemini_api_key() -> Optional[str]:
     return os.environ.get("GEMINI_API_KEY") or None
 
@@ -1365,7 +1377,7 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
     # When configured, Gemini is the selected assistant provider. Do not silently
     # send ledger context to another provider if this request fails.
     if get_gemini_api_key():
-        gemini_model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
+        gemini_model = normalize_gemini_model(os.environ.get("GEMINI_MODEL"))
         try:
             gemini_client = get_gemini_client()
             response = await gemini_client.chat.completions.create(

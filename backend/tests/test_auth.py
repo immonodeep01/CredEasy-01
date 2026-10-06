@@ -753,8 +753,41 @@ class TestProtectedRoutes:
 
         assert response.status_code == 200
         assert response.json()['reply'] == 'Hello!'
-        assert captured['model'] == 'gemini-3.5-flash-lite'
+        assert captured['model'] == 'gemini-2.5-flash-lite'
         assert captured['response_format'] == {'type': 'json_object'}
+
+    def test_voice_assist_normalizes_legacy_gemini_model(self, client, monkeypatch):
+        monkeypatch.setitem(
+            client.app.dependency_overrides,
+            server.get_authenticated_user,
+            lambda: {"user_id": SUPABASE_USER_PAYLOAD["id"]},
+        )
+        monkeypatch.setattr(server, 'get_gemini_api_key', lambda: 'test-gemini-key')
+        monkeypatch.setenv('GEMINI_MODEL', 'gemini-3.5-flash-lite')
+        captured = {}
+
+        class FakeCompletions:
+            async def create(self, **kwargs):
+                captured.update(kwargs)
+                message = type('Message', (), {'content': '{"reply":"Hello!","actions":[]}'} )()
+                choice = type('Choice', (), {'message': message})()
+                return type('Completion', (), {'choices': [choice]})()
+
+        fake_client = type(
+            'FakeGeminiClient',
+            (),
+            {'chat': type('Chat', (), {'completions': FakeCompletions()})()},
+        )()
+        monkeypatch.setattr(server, 'get_gemini_client', lambda: fake_client)
+
+        response = client.post(
+            '/api/voice/assist',
+            headers={'Authorization': '******'},
+            json={'transcript': 'Hello', 'context': {}, 'lang': 'en'},
+        )
+
+        assert response.status_code == 200
+        assert captured['model'] == 'gemini-2.5-flash-lite'
 
     def test_voice_assist_does_not_fallback_after_configured_gemini_fails(self, client, monkeypatch):
         monkeypatch.setitem(

@@ -90,7 +90,7 @@ as required by Android.
 ## Gemini
 
 Set `GEMINI_API_KEY` on the backend to enable Gemini assistant replies.
-`GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`.
+`GEMINI_MODEL` defaults to `gemini-2.5-flash-lite`.
 
 Existing transcription and synthesis providers are used only while
 `GOOGLE_CLOUD_PROJECT` is unset. Once Google Cloud is configured, provider

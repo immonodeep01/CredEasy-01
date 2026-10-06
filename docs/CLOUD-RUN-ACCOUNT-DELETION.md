@@ -29,3 +29,40 @@ available to that service.
 
 The mobile app must never contain the service-role key. Failed remote deletion
 must leave local data intact; do not clear it manually as part of setup.
+
+## Deploy backend updates with Cloud Build
+
+The repository includes `backend/Dockerfile` and a root-level
+`cloudbuild.yaml`. The trigger builds only the backend directory, pushes an
+image to Artifact Registry, and updates the existing `credeasy-api` service.
+The backend Docker context excludes `.env` files; provider and Supabase secrets
+must remain configured on the Cloud Run runtime service.
+
+Before creating a trigger:
+
+1. Create a Docker Artifact Registry repository named
+   `credeasy-api-images` in `asia-south1`.
+2. In **Cloud Build → Settings**, identify the build service account. Grant it
+   **Artifact Registry Writer** and **Cloud Run Admin** in the project.
+3. Grant that build service account **Service Account User** on the runtime
+   service account used by `credeasy-api`. Keep **Secret Manager Secret
+   Accessor** granted to the runtime service account, not just the build
+   service account.
+4. Push `backend/Dockerfile`, `backend/.dockerignore`, `cloudbuild.yaml`, and
+   the backend source changes to the repository branch that the trigger will
+   watch.
+5. Create a Cloud Build trigger in `asia-south1` for **Push to a branch**.
+   Select the connected CredEasy repository, enter the exact branch regex
+   (for example, `^main$`), select the repository Cloud Build configuration,
+   and set the config path to `cloudbuild.yaml`.
+6. Run the trigger and wait for its build and deploy steps to succeed. In
+   **Cloud Run → credeasy-api → Revisions**, verify the new revision is ready
+   and receiving traffic. Confirm its runtime service account and Secret
+   Manager bindings are still correct.
+
+The deployment updates the container image of the existing service; it does
+not set or expose secret values. Confirm the service still has
+`SUPABASE_SERVICE_ROLE_KEY` and `GEMINI_API_KEY` configured from Secret
+Manager. Set `GEMINI_MODEL` to `gemini-2.5-flash-lite` if it is explicitly set
+to an older model. A successful `/api/health` check does not validate either
+provider integration.
