@@ -753,7 +753,7 @@ class TestProtectedRoutes:
 
         assert response.status_code == 200
         assert response.json()['reply'] == 'Hello!'
-        assert captured['model'] == 'gemini-2.5-flash-lite'
+        assert captured['model'] == 'gemini-3.5-flash-lite'
         assert captured['response_format'] == {'type': 'json_object'}
 
     def test_voice_assist_normalizes_legacy_gemini_model(self, client, monkeypatch):
@@ -763,7 +763,7 @@ class TestProtectedRoutes:
             lambda: {"user_id": SUPABASE_USER_PAYLOAD["id"]},
         )
         monkeypatch.setattr(server, 'get_gemini_api_key', lambda: 'test-gemini-key')
-        monkeypatch.setenv('GEMINI_MODEL', 'gemini-3.5-flash-lite')
+        monkeypatch.setenv('GEMINI_MODEL', 'gemini-2.5-flash-lite')
         captured = {}
 
         class FakeCompletions:
@@ -787,7 +787,7 @@ class TestProtectedRoutes:
         )
 
         assert response.status_code == 200
-        assert captured['model'] == 'gemini-2.5-flash-lite'
+        assert captured['model'] == 'gemini-3.5-flash-lite'
 
     def test_voice_assist_does_not_fallback_after_configured_gemini_fails(self, client, monkeypatch):
         monkeypatch.setitem(
@@ -876,13 +876,16 @@ class TestDeleteAccount:
             }
             return Response(200, listings.get(prefix, []))
 
-        async def fake_delete(self, url, headers=None, json=None, **kwargs):
-            calls.append(("delete", url, json))
-            if "/auth/v1/admin/users/" in url:
-                return Response(200, {"id": SUPABASE_USER_PAYLOAD["id"]})
+        async def fake_request(self, method, url, headers=None, json=None, **kwargs):
+            calls.append(("request", method, url, json))
             return Response(200, {})
 
+        async def fake_delete(self, url, headers=None, **kwargs):
+            calls.append(("delete", url))
+            return Response(200, {"id": SUPABASE_USER_PAYLOAD["id"]})
+
         monkeypatch.setattr("httpx.AsyncClient.post", fake_post)
+        monkeypatch.setattr("httpx.AsyncClient.request", fake_request)
         monkeypatch.setattr("httpx.AsyncClient.delete", fake_delete)
 
         response = client.delete(
@@ -892,9 +895,10 @@ class TestDeleteAccount:
 
         assert response.status_code == 200
         assert response.json()["success"] is True
-        media_delete = next(call for call in calls if call[0] == "delete" and "storage" in call[1])
+        media_delete = next(call for call in calls if call[0] == "request" and "storage" in call[2])
         account_delete = next(call for call in calls if call[0] == "delete" and "admin/users" in call[1])
-        assert media_delete[2]["prefixes"] == [
+        assert media_delete[1] == "DELETE"
+        assert media_delete[3]["prefixes"] == [
             f'{SUPABASE_USER_PAYLOAD["id"]}/business-id/profile/photo.png'
         ]
         assert calls.index(media_delete) < calls.index(account_delete)

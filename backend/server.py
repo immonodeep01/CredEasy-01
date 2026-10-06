@@ -371,7 +371,8 @@ async def _delete_user_media(
             offset += len(entries)
 
     for start in range(0, len(object_paths), 1000):
-        response = await client.delete(
+        response = await client.request(
+            "DELETE",
             f"{SUPABASE_URL}/storage/v1/object/{bucket}",
             headers=headers,
             json={"prefixes": object_paths[start:start + 1000]},
@@ -658,12 +659,10 @@ async def voice_transcribe_stream(websocket: WebSocket):
 
 def normalize_gemini_model(model_name: Optional[str]) -> str:
     if not model_name:
-        return "gemini-2.5-flash-lite"
+        return "gemini-3.5-flash-lite"
     normalized = model_name.strip()
     legacy_aliases = {
-        "gemini-3.5-flash-lite": "gemini-2.5-flash-lite",
-        "gemini-3.5-flash": "gemini-2.5-flash",
-        "gemini-3.5-pro": "gemini-2.5-pro",
+        "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
     }
     return legacy_aliases.get(normalized, normalized)
 

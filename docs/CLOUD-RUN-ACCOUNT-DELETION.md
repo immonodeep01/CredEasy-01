@@ -63,6 +63,6 @@ Before creating a trigger:
 The deployment updates the container image of the existing service; it does
 not set or expose secret values. Confirm the service still has
 `SUPABASE_SERVICE_ROLE_KEY` and `GEMINI_API_KEY` configured from Secret
-Manager. Set `GEMINI_MODEL` to `gemini-2.5-flash-lite` if it is explicitly set
-to an older model. A successful `/api/health` check does not validate either
-provider integration.
+Manager. Set `GEMINI_MODEL` to `gemini-3.5-flash-lite` if it is explicitly set
+to the retired `gemini-2.5-flash-lite` model. A successful `/api/health`
+check does not validate either provider integration.
