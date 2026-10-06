@@ -11,6 +11,11 @@
 
 <!-- Add completed features below this line -->
 
+### 2026-10-06 — Fix Cloud Run Voice Assistant and Account Deletion
+**Feature:** Resolve the deployed Gemini model rejection and account-media cleanup 500.
+**Status:** Backend fixes deployed to Cloud Run; local regressions pass. Authenticated assistant and destructive account deletion still require user-side confirmation/testing.
+**Summary:** Cloud Run logs identified `gemini-2.5-flash-lite` as unavailable to this project and reported the supported `gemini-3.5-flash-lite` model; the service now uses that model and the backend maps the retired setting. The account deletion 500 came from passing `json` to `httpx.AsyncClient.delete`; storage deletes now use `request("DELETE", ..., json=...)`. Cloud Build deployed commit `1f5419d` to revision `credeasy-api-00012-9ld`; the model environment setting was then updated on `credeasy-api-00013-77k`.
+
 ### 2026-10-06 — Add Cloud Run Backend Deployment Pipeline
 **Feature:** Add backend container and Cloud Build configuration for deploying the Android API to Cloud Run.
 **Status:** Configuration added and locally validated; Cloud Build trigger, Artifact Registry repository, IAM grants, and remote deployment require Google Cloud Console access.
