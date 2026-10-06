@@ -66,3 +66,8 @@ not set or expose secret values. Confirm the service still has
 Manager. Set `GEMINI_MODEL` to `gemini-3.5-flash-lite` if it is explicitly set
 to the retired `gemini-2.5-flash-lite` model. A successful `/api/health`
 check does not validate either provider integration.
+
+If Supabase Auth returns an error during account deletion, the backend logs its
+error code, a bounded and redacted error message, and the Supabase request ID
+when supplied. Use those fields in Cloud Run Logs Explorer to diagnose an
+upstream HTTP 500; the client does not receive internal Supabase details.

@@ -11,6 +11,11 @@
 
 <!-- Add completed features below this line -->
 
+### 2026-10-06 — Surface Gemini Credit Exhaustion and Diagnose Supabase Deletion
+**Feature:** Explain exhausted Gemini API credits to Chotu users and add safe upstream diagnostics for account-deletion failures.
+**Status:** Local regression tests pass; Cloud Run deployment started after push. Gemini service still requires its AI Studio project credits/postpay to be restored. Supabase HTTP 500 root cause depends on the next redacted upstream error log.
+**Summary:** Gemini HTTP 402 now returns actionable billing guidance without switching providers or exposing ledger context. Supabase deletion failures log only a bounded/redacted upstream code/message and request ID for diagnosis; error details remain hidden from the app. No account-deletion request was issued by the agent.
+
 ### 2026-10-06 — Fix Cloud Run Voice Assistant and Account Deletion
 **Feature:** Resolve the deployed Gemini model rejection and account-media cleanup 500.
 **Status:** Backend fixes deployed to Cloud Run; local regressions pass. Authenticated assistant and destructive account deletion still require user-side confirmation/testing.

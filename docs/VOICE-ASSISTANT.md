@@ -92,6 +92,11 @@ as required by Android.
 Set `GEMINI_API_KEY` on the backend to enable Gemini assistant replies.
 `GEMINI_MODEL` defaults to `gemini-3.5-flash-lite`. The backend maps the
 retired `gemini-2.5-flash-lite` setting to this model for existing deployments.
+If the API returns HTTP 402, the Gemini API project linked to `GEMINI_API_KEY`
+has exhausted its credits. Enable postpay or add credits for that Gemini API
+project in Google AI Studio; enabling Google Cloud project billing alone does
+not replenish Gemini API credits. The backend does not send ledger context to a
+different provider when configured Gemini requests fail.
 
 Existing transcription and synthesis providers are used only while
 `GOOGLE_CLOUD_PROJECT` is unset. Once Google Cloud is configured, provider

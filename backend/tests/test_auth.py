@@ -822,8 +822,60 @@ class TestProtectedRoutes:
         assert response.status_code == 502
         assert response.json()['detail'] == 'The assistant is unavailable. Please try again.'
 
+    def test_voice_assist_explains_depleted_gemini_credits(self, client, monkeypatch):
+        monkeypatch.setitem(
+            client.app.dependency_overrides,
+            server.get_authenticated_user,
+            lambda: {"user_id": SUPABASE_USER_PAYLOAD["id"]},
+        )
+        monkeypatch.setattr(server, 'get_gemini_api_key', lambda: 'test-gemini-key')
+
+        class ProviderError(RuntimeError):
+            status_code = 402
+
+        class FakeCompletions:
+            async def create(self, **kwargs):
+                raise ProviderError('prepayment credits are depleted')
+
+        fake_client = type(
+            'FakeGeminiClient',
+            (),
+            {'chat': type('Chat', (), {'completions': FakeCompletions()})()},
+        )()
+        monkeypatch.setattr(server, 'get_gemini_client', lambda: fake_client)
+
+        response = client.post(
+            '/api/voice/assist',
+            json={'transcript': 'Hello', 'context': {}, 'lang': 'en'},
+        )
+
+        assert response.status_code == 503
+        assert 'no remaining credits' in response.json()['detail']
+        assert 'GEMINI_API_KEY' in response.json()['detail']
+
 
 class TestDeleteAccount:
+    def test_supabase_error_summary_redacts_sensitive_values(self):
+        class Response:
+            headers = {}
+
+            @staticmethod
+            def json():
+                return {
+                    "code": "unexpected_failure",
+                    "message": (
+                        "Could not delete user alice@example.com "
+                        "11111111-2222-3333-4444-555555555555 Bearer secret-token"
+                    ),
+                }
+
+        code, message = server._supabase_error_summary(Response())
+
+        assert code == "unexpected_failure"
+        assert "alice@example.com" not in message
+        assert "11111111-2222-3333-4444-555555555555" not in message
+        assert "secret-token" not in message
+
     def test_missing_service_role_key_returns_actionable_unavailable_status(
         self, client, monkeypatch
     ):
@@ -850,6 +902,8 @@ class TestDeleteAccount:
         calls = []
 
         class Response:
+            headers = {}
+
             def __init__(self, status_code, payload=None):
                 self.status_code = status_code
                 self.text = ""
@@ -940,6 +994,8 @@ class TestDeleteAccount:
         monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key")
 
         class Response:
+            headers = {}
+
             def __init__(self, status_code, payload=None):
                 self.status_code = status_code
                 self.text = ""

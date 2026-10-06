@@ -428,7 +428,16 @@ async def delete_account(user: dict = Depends(get_authenticated_user)):
         if resp.status_code in (200, 204):
             return {"success": True, "message": "Account deleted successfully"}
         else:
-            logger.error("Supabase account deletion failed: status=%s user_id=%s", resp.status_code, user_id)
+            error_code, error_message = _supabase_error_summary(resp)
+            logger.error(
+                "Supabase account deletion failed: status=%s user_id=%s "
+                "error_code=%s error_message=%s request_id=%s",
+                resp.status_code,
+                user_id,
+                error_code,
+                error_message,
+                resp.headers.get("sb-request-id") or resp.headers.get("x-request-id"),
+            )
             raise HTTPException(
                 status_code=502,
                 detail=f"Supabase could not delete the account (HTTP {resp.status_code}). Please try again or contact support.",
@@ -665,6 +674,32 @@ def normalize_gemini_model(model_name: Optional[str]) -> str:
         "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
     }
     return legacy_aliases.get(normalized, normalized)
+
+
+def _supabase_error_summary(response: httpx.Response) -> tuple[Optional[str], Optional[str]]:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+
+    code = payload.get("code") or payload.get("error_code")
+    message = payload.get("message") or payload.get("msg") or payload.get("error_description")
+    if not isinstance(code, str):
+        code = None
+    if not isinstance(message, str):
+        message = None
+    if message:
+        message = re.sub(r"[\r\n\t]+", " ", message)
+        message = re.sub(r"(?i)\bBearer\s+\S+", "Bearer [redacted]", message)
+        message = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[redacted-email]", message)
+        message = re.sub(
+            r"\b[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}\b",
+            "[redacted-id]",
+            message,
+        )[:500]
+    return code, message
 
 
 def get_gemini_api_key() -> Optional[str]:
@@ -1393,6 +1428,15 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
                 type(error).__name__,
                 error,
             )
+            if getattr(error, "status_code", None) == 402:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        "Chotu is temporarily unavailable because the Gemini API "
+                        "project has no remaining credits. Add Gemini API credits or "
+                        "finish enabling postpay for the project linked to GEMINI_API_KEY."
+                    ),
+                ) from error
             raise HTTPException(status_code=502, detail="The assistant is unavailable. Please try again.")
     else:
         # Backward-compatible providers remain available until Gemini is configured.
