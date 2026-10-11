@@ -1,7 +1,9 @@
+import asyncio
 import os
 import sys
 from pathlib import Path
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -44,10 +46,75 @@ def stub_supabase(monkeypatch, status_code, payload):
     monkeypatch.setattr('httpx.AsyncClient.get', fake_get)
 
 
+def test_compact_voice_context_preserves_answer_data_and_drops_internal_metadata():
+    context = {
+        'shopName': 'Shop',
+        'language': 'en',
+        'totalReceivable': 125,
+        'parties': [{
+            'id': 'internal-party-id',
+            'name': 'Ramesh',
+            'phone': '9876543210',
+            'type': 'CUSTOMER',
+            'balance': 125,
+            'photoUri': 'private-image-path',
+        }],
+        'recentTransactions': [{
+            'id': 'internal-transaction-id',
+            'party': 'Ramesh',
+            'amount': 125,
+            'kind': 'GAVE',
+            'date': '2026-10-06',
+            'photoUri': 'private-image-path',
+        }],
+        'inventory': [{
+            'id': 'internal-item-id',
+            'name': 'Rice',
+            'currentStock': 5,
+            'unit': 'kg',
+            'price': 40,
+            'sku': 'RICE-1',
+            'createdAt': '2026-10-06',
+            'photoUri': 'private-image-path',
+        }],
+        'inventoryMovements': [{
+            'id': 'internal-movement-id',
+            'itemId': 'internal-item-id',
+            'itemName': 'Rice',
+            'type': 'sale',
+            'quantityChange': -1,
+            'quantityAfter': 5,
+            'createdAt': '2026-10-06',
+            'syncStatus': 'SYNCED',
+        }],
+        'unrecognized': 'not sent to the model',
+    }
+
+    result = server.compact_voice_context(context)
+
+    assert result['shopName'] == 'Shop'
+    assert result['totalReceivable'] == 125
+    assert result['parties'] == [{
+        'name': 'Ramesh', 'phone': '9876543210', 'type': 'CUSTOMER', 'balance': 125,
+    }]
+    assert result['recentTransactions'] == [{
+        'party': 'Ramesh', 'amount': 125, 'kind': 'GAVE', 'date': '2026-10-06',
+    }]
+    assert result['inventory'] == [{
+        'name': 'Rice', 'currentStock': 5, 'unit': 'kg', 'price': 40, 'sku': 'RICE-1',
+    }]
+    assert result['inventoryMovements'] == [{
+        'itemName': 'Rice', 'type': 'sale', 'quantityChange': -1,
+        'quantityAfter': 5, 'createdAt': '2026-10-06',
+    }]
+    assert 'unrecognized' not in result
+
+
 @pytest.fixture
 def client(monkeypatch):
     # The dependency reads these as module globals at call time, so setting them
     # here keeps the suite independent of whatever is in backend/.env.
+    server.USER_RATE_LIMIT_BUCKETS.clear()
     monkeypatch.setattr(server, 'SUPABASE_URL', 'https://example.supabase.co')
     monkeypatch.setattr(server, 'SUPABASE_ANON_KEY', 'test-anon-key')
     monkeypatch.delenv('GOOGLE_CLOUD_PROJECT', raising=False)
@@ -55,14 +122,29 @@ def client(monkeypatch):
 
     # Default: Supabase rejects the token. Tests that need a valid one re-stub.
     stub_supabase(monkeypatch, 401, {'msg': 'invalid claim: missing sub claim'})
-    return TestClient(server.app)
+    previous_httpx_client = getattr(server.app.state, 'httpx_client', None)
+    test_httpx_client = httpx.AsyncClient()
+    server.app.state.httpx_client = test_httpx_client
+    test_client = TestClient(server.app)
+
+    async def allow_voice_limit(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(server, 'enforce_shared_voice_rate_limit', allow_voice_limit)
+    yield test_client
+    asyncio.run(test_httpx_client.aclose())
+    if previous_httpx_client is None:
+        del server.app.state.httpx_client
+    else:
+        server.app.state.httpx_client = previous_httpx_client
+    test_client.close()
 
 
 class TestSupabaseTokenAuth:
     def test_valid_token_is_accepted(self, client, monkeypatch):
         stub_supabase(monkeypatch, 200, SUPABASE_USER_PAYLOAD)
         response = client.get('/api/auth/me', headers={'Authorization': 'Bearer good-token'})
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         body = response.json()['user']
         assert body['email'] == 'alice@example.com'
         assert body['user_id'] == SUPABASE_USER_PAYLOAD['id']
@@ -110,6 +192,102 @@ class TestAuthMe:
         response = client.get('/api/auth/me', headers={'Authorization': '******'})
         assert response.status_code == 401
 
+
+def test_voice_provider_circuit_opens_after_consecutive_failures():
+    provider = 'test-provider'
+    server.VOICE_PROVIDER_CIRCUITS.pop(provider, None)
+
+    for _ in range(server.VOICE_CIRCUIT_FAILURE_THRESHOLD):
+        server.record_voice_provider_failure(provider)
+
+    with pytest.raises(server.HTTPException) as error:
+        server.check_voice_provider_circuit(provider)
+    assert error.value.status_code == 503
+
+    server.record_voice_provider_success(provider)
+    server.check_voice_provider_circuit(provider)
+
+
+def test_shared_voice_rate_limit_rejects_when_database_quota_is_exhausted(monkeypatch):
+    server.USER_RATE_LIMIT_BUCKETS.clear()
+    monkeypatch.setattr(server, 'SUPABASE_URL', 'https://example.supabase.co')
+    monkeypatch.setattr(server, 'SUPABASE_ANON_KEY', 'test-anon-key')
+    results = iter([True, False])
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return next(results)
+
+    class SupabaseHttpClient:
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    async def check():
+        await server.enforce_shared_voice_rate_limit(
+            'user-1',
+            'Bearer test-token',
+            SupabaseHttpClient(),
+        )
+        with pytest.raises(server.HTTPException) as error:
+            await server.enforce_shared_voice_rate_limit(
+                'user-1',
+                'Bearer test-token',
+                SupabaseHttpClient(),
+            )
+        assert error.value.status_code == 429
+
+    asyncio.run(check())
+
+
+def test_legacy_transaction_list_is_page_limited(client, monkeypatch):
+    monkeypatch.setitem(
+        client.app.dependency_overrides,
+        server.get_authenticated_user,
+        lambda: {'user_id': SUPABASE_USER_PAYLOAD['id']},
+    )
+    requests = []
+
+    class Response:
+        def __init__(self, payload):
+            self.status_code = 200
+            self.payload = payload
+
+        def json(self):
+            return self.payload
+
+    class SupabaseHttpClient:
+        async def get(self, url, *, headers, params=None, **kwargs):
+            requests.append((url, params))
+            return Response([{'id': 'tx-1'}])
+
+    server.app.state.httpx_client = SupabaseHttpClient()
+    response = client.get(
+        '/api/transactions?page_size=25&offset=50',
+        headers={'Authorization': 'Bearer pagination-test-token'},
+    )
+
+    assert response.status_code == 200, response.json()
+    assert response.json()['transactions'] == [{'id': 'tx-1'}]
+    assert response.json()['next_offset'] is None
+    assert requests[0][1]['limit'] == 25
+    assert requests[0][1]['offset'] == 50
+
+
+def test_legacy_transaction_list_rejects_oversized_pages(client, monkeypatch):
+    monkeypatch.setitem(
+        client.app.dependency_overrides,
+        server.get_authenticated_user,
+        lambda: {'user_id': SUPABASE_USER_PAYLOAD['id']},
+    )
+    response = client.get(
+        '/api/transactions?page_size=51',
+        headers={'Authorization': '******'},
+    )
+
+    assert response.status_code == 422
+
     def test_auth_me_malformed_header(self, client):
         response = client.get('/api/auth/me', headers={'Authorization': 'garbage_token'})
         assert response.status_code == 401
@@ -121,6 +299,59 @@ class TestAuthMe:
     def test_auth_me_token_supabase_rejects(self, client):
         response = client.get('/api/auth/me', headers={'Authorization': 'Bearer bogus'})
         assert response.status_code == 401
+
+
+class TestLedgerWritesUseCallerIdentity:
+    def test_party_and_transaction_upserts_forward_the_verified_user_token(
+        self, client, monkeypatch
+    ):
+        stub_supabase(monkeypatch, 200, SUPABASE_USER_PAYLOAD)
+        captured = []
+
+        class Response:
+            status_code = 201
+            text = ''
+
+        async def fake_post(self, url, headers=None, json=None, **kwargs):
+            captured.append((url, headers, json))
+            return Response()
+
+        monkeypatch.setattr('httpx.AsyncClient.post', fake_post)
+        request_headers = {'Authorization': 'Bearer verified-user-token'}
+
+        party_response = client.post(
+            '/api/parties',
+            headers=request_headers,
+            json={
+                'id': 'party-1',
+                'name': 'Alice Store',
+                'phone': '',
+                'type': 'CUSTOMER',
+                'opening_balance': 0,
+                'created_at': '',
+            },
+        )
+        transaction_response = client.post(
+            '/api/transactions',
+            headers=request_headers,
+            json={
+                'id': 'transaction-1',
+                'party_id': 'party-1',
+                'amount': 10,
+                'type': 'DEBIT',
+                'note': '',
+                'date': '2026-10-06T00:00:00Z',
+                'sync_status': 'SYNCED',
+            },
+        )
+
+        assert party_response.status_code == 200
+        assert transaction_response.status_code == 200
+        assert len(captured) == 2
+        for _, headers, row in captured:
+            assert headers['Authorization'] == 'Bearer verified-user-token'
+            assert headers['apikey'] == 'test-anon-key'
+            assert row['user_id'] == SUPABASE_USER_PAYLOAD['id']
 
 
 class TestProtectedRoutes:
@@ -267,6 +498,30 @@ class TestProtectedRoutes:
             "code": "GOOGLE_CLOUD_NOT_CONFIGURED",
             "detail": "Google Cloud Speech-to-Text is not configured on the server",
         }
+
+    def test_voice_transcribe_stream_bounds_slow_finalization(self, client, monkeypatch):
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+        monkeypatch.setattr(server, "STREAM_FINALIZE_TIMEOUT_SECONDS", 0.01)
+
+        async def authenticate(authorization):
+            return {"user_id": SUPABASE_USER_PAYLOAD["id"]}
+
+        class FakeSpeechClient:
+            async def streaming_recognize(self, requests, timeout):
+                async def responses():
+                    await asyncio.Event().wait()
+                    yield None
+
+                return responses()
+
+        monkeypatch.setattr(server, "get_authenticated_user", authenticate)
+        monkeypatch.setattr(server, "get_google_speech_client", lambda: FakeSpeechClient())
+
+        with client.websocket_connect("/api/voice/transcribe/stream") as websocket:
+            websocket.send_json({"authorization": "******"})
+            assert websocket.receive_json()["type"] == "ready"
+            websocket.send_json({"type": "finish"})
+            assert websocket.receive_json() == {"type": "complete", "text": ""}
 
     def test_voice_transcribe_uses_google_cloud_speech_v2(self, client, monkeypatch):
         monkeypatch.setitem(
@@ -506,7 +761,8 @@ class TestProtectedRoutes:
         captured = {}
 
         class FakeTtsClient:
-            async def synthesize_speech(self, request):
+            async def synthesize_speech(self, request, **kwargs):
+                captured["options"] = kwargs
                 captured.update(request)
                 return type("SynthesizeResponse", (), {"audio_content": audio_bytes})()
 
@@ -520,6 +776,7 @@ class TestProtectedRoutes:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("audio/mpeg")
         assert response.content == audio_bytes
+        assert float(response.headers["x-credeasy-backend-duration-ms"]) >= 0
         assert response.headers["x-credeasy-tts-provider"] == "google-cloud"
         assert response.headers["x-credeasy-tts-language"] == "hi-IN"
         assert response.headers["x-credeasy-tts-voice"] == "hi-IN-Chirp3-HD-Puck"
@@ -531,6 +788,10 @@ class TestProtectedRoutes:
         assert captured["audio_config"] == {
             "audio_encoding": "MP3",
             "speaking_rate": 0.98,
+        }
+        assert captured["options"] == {
+            "timeout": server.VOICE_TTS_TIMEOUT_SECONDS,
+            "retry": None,
         }
 
         response = client.post(
@@ -560,7 +821,7 @@ class TestProtectedRoutes:
         captured = {}
 
         class FakeTtsClient:
-            async def synthesize_speech(self, request):
+            async def synthesize_speech(self, request, **kwargs):
                 captured.update(request)
                 return type(
                     "SynthesizeResponse", (), {"audio_content": b"\x01" * 256}
@@ -587,7 +848,7 @@ class TestProtectedRoutes:
         captured = {}
 
         class FakeTtsClient:
-            async def synthesize_speech(self, request):
+            async def synthesize_speech(self, request, **kwargs):
                 captured.update(request)
                 return type("SynthesizeResponse", (), {"audio_content": b"\x01" * 256})()
 
@@ -674,7 +935,7 @@ class TestProtectedRoutes:
         monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
 
         class FakeTtsClient:
-            async def synthesize_speech(self, request):
+            async def synthesize_speech(self, request, **kwargs):
                 raise RuntimeError("provider unavailable")
 
         monkeypatch.setattr(server, "get_google_tts_client", lambda: FakeTtsClient())
@@ -723,6 +984,7 @@ class TestProtectedRoutes:
             server.get_authenticated_user,
             lambda: {"user_id": SUPABASE_USER_PAYLOAD["id"]},
         )
+        monkeypatch.delenv('GEMINI_PROVIDER', raising=False)
         monkeypatch.setattr(server, 'get_gemini_api_key', lambda: 'test-gemini-key')
         monkeypatch.delenv('GEMINI_MODEL', raising=False)
         captured = {}
@@ -753,15 +1015,16 @@ class TestProtectedRoutes:
 
         assert response.status_code == 200
         assert response.json()['reply'] == 'Hello!'
-        assert captured['model'] == 'gemini-3.5-flash-lite'
+        assert captured['model'] == 'gemini-2.5-flash-lite'
         assert captured['response_format'] == {'type': 'json_object'}
 
-    def test_voice_assist_normalizes_legacy_gemini_model(self, client, monkeypatch):
+    def test_voice_assist_uses_gemini_25_flash_lite_model(self, client, monkeypatch):
         monkeypatch.setitem(
             client.app.dependency_overrides,
             server.get_authenticated_user,
             lambda: {"user_id": SUPABASE_USER_PAYLOAD["id"]},
         )
+        monkeypatch.delenv('GEMINI_PROVIDER', raising=False)
         monkeypatch.setattr(server, 'get_gemini_api_key', lambda: 'test-gemini-key')
         monkeypatch.setenv('GEMINI_MODEL', 'gemini-2.5-flash-lite')
         captured = {}
@@ -787,7 +1050,7 @@ class TestProtectedRoutes:
         )
 
         assert response.status_code == 200
-        assert captured['model'] == 'gemini-3.5-flash-lite'
+        assert captured['model'] == 'gemini-2.5-flash-lite'
 
     def test_voice_assist_does_not_fallback_after_configured_gemini_fails(self, client, monkeypatch):
         monkeypatch.setitem(
@@ -795,6 +1058,7 @@ class TestProtectedRoutes:
             server.get_authenticated_user,
             lambda: {"user_id": SUPABASE_USER_PAYLOAD["id"]},
         )
+        monkeypatch.delenv('GEMINI_PROVIDER', raising=False)
         monkeypatch.setattr(server, 'get_gemini_api_key', lambda: 'test-gemini-key')
         monkeypatch.setattr(server, 'get_groq_api_key', lambda: 'test-groq-key')
 
@@ -852,6 +1116,145 @@ class TestProtectedRoutes:
         assert response.status_code == 503
         assert 'no remaining credits' in response.json()['detail']
         assert 'GEMINI_API_KEY' in response.json()['detail']
+
+    def test_vertex_openai_base_url_uses_supported_endpoint_hosts(self):
+        assert server._get_vertex_openai_base_url(
+            'test-project', 'us'
+        ) == (
+            'https://aiplatform.us.rep.googleapis.com/v1beta1/projects/'
+            'test-project/locations/us/endpoints/openapi'
+        )
+        assert server._get_vertex_openai_base_url(
+            'test-project', 'global'
+        ) == (
+            'https://aiplatform.googleapis.com/v1beta1/projects/'
+            'test-project/locations/global/endpoints/openapi'
+        )
+        assert server._get_vertex_openai_base_url(
+            'test-project', 'us-central1'
+        ) == (
+            'https://us-central1-aiplatform.googleapis.com/v1beta1/projects/'
+            'test-project/locations/us-central1/endpoints/openapi'
+        )
+
+    def test_vertex_voice_client_disables_retries_and_uses_short_timeout(self, monkeypatch):
+        monkeypatch.setenv('GOOGLE_CLOUD_PROJECT', 'test-project')
+        monkeypatch.setenv('VERTEX_AI_LOCATION', 'us')
+        monkeypatch.setattr(
+            server,
+            '_vertex_credentials',
+            type('Credentials', (), {'valid': True, 'token': 'test-token'})(),
+        )
+        monkeypatch.setattr(server, '_vertex_gemini_client', None)
+        monkeypatch.setattr(server, '_vertex_client_token', None)
+        captured = {}
+
+        def fake_openai_client(**kwargs):
+            captured.update(kwargs)
+            return object()
+
+        monkeypatch.setattr(server, 'AsyncOpenAI', fake_openai_client)
+
+        server._get_vertex_gemini_client()
+
+        assert captured['timeout'] == server.VOICE_ASSIST_TIMEOUT_SECONDS
+        assert captured['max_retries'] == 0
+
+    def test_voice_assist_uses_vertex_without_gemini_api_key(self, client, monkeypatch):
+        monkeypatch.setitem(
+            client.app.dependency_overrides,
+            server.get_authenticated_user,
+            lambda: {"user_id": SUPABASE_USER_PAYLOAD["id"]},
+        )
+        monkeypatch.setenv('GEMINI_PROVIDER', 'vertex')
+        monkeypatch.setenv('GOOGLE_CLOUD_PROJECT', 'test-project')
+        monkeypatch.setenv('VERTEX_AI_LOCATION', 'us-central1')
+        monkeypatch.delenv('GEMINI_API_KEY', raising=False)
+        captured = {}
+
+        class FakeCompletions:
+            async def create(self, **kwargs):
+                captured.update(kwargs)
+                message = type(
+                    'Message',
+                    (),
+                    {'content': '{"reply":"Hello!","actions":[]}'} ,
+                )()
+                choice = type('Choice', (), {'message': message})()
+                return type('Completion', (), {'choices': [choice]})()
+
+        fake_client = type(
+            'FakeVertexClient',
+            (),
+            {'chat': type('Chat', (), {'completions': FakeCompletions()})()},
+        )()
+
+        async def fake_vertex_client():
+            return fake_client
+
+        monkeypatch.setattr(server, 'get_vertex_gemini_client', fake_vertex_client)
+        monkeypatch.setattr(
+            server,
+            'get_groq_client',
+            lambda: (_ for _ in ()).throw(AssertionError('must not fall back to Groq')),
+        )
+
+        response = client.post(
+            '/api/voice/assist',
+            json={
+                'transcript': 'Hello',
+                'context': {},
+                'lang': 'en',
+                'history': [
+                    {'user': f'older question {index}', 'assistant': f'older answer {index}'}
+                    for index in range(5)
+                ],
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()['reply'] == 'Hello!'
+        assert float(response.headers['x-credeasy-backend-duration-ms']) >= 0
+        assert captured['model'] == 'google/gemini-2.5-flash-lite'
+        assert captured['response_format'] == {'type': 'json_object'}
+        assert captured['max_tokens'] == server.VOICE_ASSIST_MAX_OUTPUT_TOKENS
+        assert [message['content'] for message in captured['messages'][1:-1]] == [
+            'older question 2',
+            'older answer 2',
+            'older question 3',
+            'older answer 3',
+            'older question 4',
+            'older answer 4',
+        ]
+
+    def test_vertex_failure_does_not_fall_back_to_another_provider(self, client, monkeypatch):
+        monkeypatch.setitem(
+            client.app.dependency_overrides,
+            server.get_authenticated_user,
+            lambda: {"user_id": SUPABASE_USER_PAYLOAD["id"]},
+        )
+        monkeypatch.setenv('GEMINI_PROVIDER', 'vertex')
+        monkeypatch.setenv('GOOGLE_CLOUD_PROJECT', 'test-project')
+        monkeypatch.setattr(server, 'get_gemini_api_key', lambda: None)
+        monkeypatch.setattr(server, 'get_groq_api_key', lambda: 'test-groq-key')
+
+        async def unavailable_vertex_client():
+            raise RuntimeError('Vertex is unavailable')
+
+        monkeypatch.setattr(server, 'get_vertex_gemini_client', unavailable_vertex_client)
+        monkeypatch.setattr(
+            server,
+            'get_groq_client',
+            lambda: (_ for _ in ()).throw(AssertionError('must not fall back to Groq')),
+        )
+
+        response = client.post(
+            '/api/voice/assist',
+            json={'transcript': 'Hello', 'context': {}, 'lang': 'en'},
+        )
+
+        assert response.status_code == 502
+        assert response.json()['detail'] == 'The assistant is unavailable. Please try again.'
 
 
 class TestDeleteAccount:

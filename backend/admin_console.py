@@ -2,6 +2,7 @@
 
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -40,6 +41,10 @@ ROLE_PERMISSIONS = {
     "finance": {"analytics", "finance", "audit"},
 }
 
+ADMIN_ALLOWED_EMAILS = frozenset(
+    {"immonodeep@gmail.com", "monodeepdeb276@gmail.com"}
+)
+
 
 def _service_key() -> str:
     return os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
@@ -49,7 +54,7 @@ def _bootstrap_emails() -> set[str]:
     return {
         email.strip().casefold()
         for email in os.environ.get("ADMIN_BOOTSTRAP_EMAILS", "").split(",")
-        if email.strip()
+        if email.strip() and email.strip().casefold() in ADMIN_ALLOWED_EMAILS
     }
 
 
@@ -124,7 +129,7 @@ async def _supabase_request(
 
 
 def _response_json(response: httpx.Response, *, expected: type = list) -> Any:
-    if response.status_code not in (200, 201, 204):
+    if response.status_code not in (200, 201, 204, 206):
         logger.error(
             "Admin Supabase operation failed (status=%s)", response.status_code
         )
@@ -203,6 +208,11 @@ async def require_admin(
             status_code=403,
             detail="An email-verified admin identity is required.",
         )
+    if email not in ADMIN_ALLOWED_EMAILS:
+        raise HTTPException(
+            status_code=403,
+            detail="This Google account is not allowed to access the admin console.",
+        )
     if email in _bootstrap_emails():
         return {
             **user,
@@ -275,6 +285,32 @@ class AnnouncementInput(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     body: str = Field(min_length=1, max_length=4000)
     audience: Literal["all", "active_30d", "unverified"] = "all"
+
+    @field_validator("title", "body")
+    @classmethod
+    def require_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("This field cannot be blank.")
+        return value
+
+
+class PushDeviceInput(BaseModel):
+    expo_push_token: str = Field(min_length=20, max_length=255)
+    platform: Literal["android"] = "android"
+
+    @field_validator("expo_push_token")
+    @classmethod
+    def validate_expo_push_token(cls, value: str) -> str:
+        value = value.strip()
+        if not re.fullmatch(r"(?:ExpoPushToken|ExponentPushToken)\[[A-Za-z0-9_-]+\]", value):
+            raise ValueError("A valid Expo push token is required.")
+        return value
+
+
+class DirectPushInput(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    body: str = Field(min_length=1, max_length=4000)
 
     @field_validator("title", "body")
     @classmethod
@@ -630,17 +666,21 @@ async def admin_revoke_sessions(
 
 
 @admin_router.get("/api/admin/roles")
-async def list_admin_roles(admin: dict = Depends(require_permission("roles"))):
+async def list_admin_roles(
+    page: int = Query(default=1, ge=1, le=10000),
+    admin: dict = Depends(require_permission("roles")),
+):
     response = await _supabase_request(
         "GET",
         "/rest/v1/admin_roles",
         params={
             "select": "user_id,email,role,active,created_at,updated_at",
             "order": "created_at.asc",
-            "limit": "500",
+            "limit": "50",
+            "offset": str((page - 1) * 50),
         },
     )
-    return {"roles": _response_json(response)}
+    return {"roles": _response_json(response), "page": page}
 
 
 @admin_router.post("/api/admin/roles")
@@ -783,14 +823,21 @@ async def admin_ledger(
 
 @admin_router.get("/api/admin/content")
 async def list_admin_content(
+    page: int = Query(default=1, ge=1, le=10000),
     admin: dict = Depends(require_permission("content")),
 ):
     rows = await _rows(
         "admin_content_items",
-        {"select": "*", "order": "updated_at.desc", "limit": "200"},
+        {
+            "select": "*",
+            "order": "updated_at.desc",
+            "limit": "50",
+            "offset": str((page - 1) * 50),
+        },
     )
     return {
         "items": rows,
+        "page": page,
         "delivery": (
             "Admin drafts/review items are stored centrally; the mobile app "
             "does not yet consume remote CMS content."
@@ -850,16 +897,26 @@ async def update_admin_content(
 
 @admin_router.get("/api/admin/announcements")
 async def list_announcements(
+    page: int = Query(default=1, ge=1, le=10000),
     admin: dict = Depends(require_permission("content")),
 ):
     rows = await _rows(
         "admin_announcements",
-        {"select": "*", "order": "created_at.desc", "limit": "200"},
+        {
+            "select": "*",
+            "order": "created_at.desc",
+            "limit": "50",
+            "offset": str((page - 1) * 50),
+        },
     )
     return {
         "items": rows,
+        "page": page,
         "delivery": (
-            "Drafts only; push delivery is not configured for this app."
+            "Backend push delivery is configured; an opted-in Android device "
+            "and EAS FCM credentials are still required."
+            if os.environ.get("EXPO_ACCESS_TOKEN", "").strip()
+            else "Push sending is disabled until EXPO_ACCESS_TOKEN is added to the backend secret store."
         ),
     }
 
@@ -890,13 +947,340 @@ async def create_announcement(
     }
 
 
+@admin_router.post("/api/push/device")
+async def register_push_device(
+    payload: PushDeviceInput,
+    user: dict = Depends(_authenticated_user),
+):
+    response = await _supabase_request(
+        "POST",
+        "/rest/v1/push_devices",
+        params={"on_conflict": "expo_push_token"},
+        payload={
+            "expo_push_token": payload.expo_push_token,
+            "user_id": user["user_id"],
+            "platform": payload.platform,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="resolution=merge-duplicates,return=minimal",
+    )
+    _response_json(response, expected=dict)
+    return {"registered": True}
+
+
+@admin_router.delete("/api/push/device")
+async def unregister_push_device(
+    payload: PushDeviceInput,
+    user: dict = Depends(_authenticated_user),
+):
+    response = await _supabase_request(
+        "DELETE",
+        "/rest/v1/push_devices",
+        params={
+            "expo_push_token": f"eq.{payload.expo_push_token}",
+            "user_id": f"eq.{user['user_id']}",
+        },
+        prefer="return=minimal",
+    )
+    if response.status_code == 404:
+        return {"registered": False}
+    _response_json(response)
+    return {"registered": False}
+
+
+async def _registered_push_devices(
+    user_id: Optional[UUID] = None,
+) -> list[dict[str, Any]]:
+    devices: list[dict[str, Any]] = []
+    offset = 0
+    page_size = 500
+    while True:
+        params: dict[str, Any] = {
+            "select": "expo_push_token,user_id",
+            "order": "updated_at.asc",
+            "limit": str(page_size),
+            "offset": str(offset),
+        }
+        if user_id is not None:
+            params["user_id"] = f"eq.{user_id}"
+        page = await _rows("push_devices", params)
+        devices.extend(page)
+        if len(page) < page_size:
+            return devices
+        offset += page_size
+
+
+async def _send_expo_pushes(
+    devices: list[dict[str, Any]],
+    *,
+    title: str,
+    body: str,
+    notification_id: str,
+) -> tuple[int, int]:
+    messages = [
+        {
+            "to": device["expo_push_token"],
+            "title": title,
+            "body": body,
+            "sound": "default",
+            "priority": "high",
+            "channelId": "default",
+            "data": {
+                "type": "admin-message",
+                "notificationId": notification_id,
+                "accountId": str(device["user_id"]),
+            },
+        }
+        for device in devices
+    ]
+    if any(len(message["title"].encode("utf-8")) + len(message["body"].encode("utf-8")) > 3000 for message in messages):
+        raise HTTPException(
+            status_code=422,
+            detail="The title and message are too large for a push notification.",
+        )
+
+    accepted = 0
+    failed = 0
+    invalid_tokens: list[str] = []
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    expo_access_token = os.environ.get("EXPO_ACCESS_TOKEN", "").strip()
+    if not expo_access_token:
+        logger.error("Expo push service access token is not configured")
+        raise HTTPException(
+            status_code=503,
+            detail="Push delivery is not configured. Add EXPO_ACCESS_TOKEN to the backend secret store.",
+        )
+    headers["Authorization"] = f"Bearer {expo_access_token}"
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            for start in range(0, len(messages), 100):
+                batch = messages[start : start + 100]
+                response = await client.post(
+                    "https://exp.host/--/api/v2/push/send",
+                    headers=headers,
+                    json=batch,
+                )
+                if response.status_code >= 400:
+                    logger.warning(
+                        "Expo push request failed (status=%s batch_size=%s)",
+                        response.status_code,
+                        len(batch),
+                    )
+                    raise HTTPException(
+                        status_code=502,
+                        detail="The push provider could not accept the notification batch.",
+                    )
+                try:
+                    result = response.json()
+                except ValueError as error:
+                    logger.error("Expo push response was not JSON")
+                    raise HTTPException(
+                        status_code=502,
+                        detail="The push provider returned an invalid response.",
+                    ) from error
+                tickets = result.get("data") if isinstance(result, dict) else None
+                if not isinstance(tickets, list) or len(tickets) != len(batch):
+                    logger.error("Expo push response had an invalid ticket shape")
+                    raise HTTPException(
+                        status_code=502,
+                        detail="The push provider returned an invalid response.",
+                    )
+                for index, ticket in enumerate(tickets):
+                    if isinstance(ticket, dict) and ticket.get("status") == "ok":
+                        accepted += 1
+                        continue
+                    failed += 1
+                    details = ticket.get("details") if isinstance(ticket, dict) else None
+                    if isinstance(details, dict) and details.get("error") == "DeviceNotRegistered":
+                        invalid_tokens.append(batch[index]["to"])
+    except httpx.HTTPError as error:
+        logger.warning(
+            "Expo push service unavailable (error_type=%s)",
+            type(error).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="The push service is temporarily unavailable.",
+        ) from error
+
+    for token in invalid_tokens:
+        await _supabase_request(
+            "DELETE",
+            "/rest/v1/push_devices",
+            params={"expo_push_token": f"eq.{token}"},
+            prefer="return=minimal",
+        )
+    return accepted, failed
+
+
+@admin_router.post("/api/admin/announcements/{announcement_id}/send")
+async def send_announcement(
+    announcement_id: UUID,
+    admin: dict = Depends(require_permission("content")),
+):
+    existing = await _rows(
+        "admin_announcements",
+        {
+            "select": "id,title,body,audience,status",
+            "id": f"eq.{announcement_id}",
+            "limit": "1",
+        },
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Announcement not found.")
+    announcement = existing[0]
+    if announcement["status"] != "draft":
+        raise HTTPException(status_code=409, detail="Only draft announcements can be sent.")
+    if announcement["audience"] != "all":
+        raise HTTPException(status_code=422, detail="Only all-user announcements can be sent.")
+
+    claimed = await _supabase_request(
+        "PATCH",
+        "/rest/v1/admin_announcements",
+        params={"id": f"eq.{announcement_id}", "status": "eq.draft"},
+        payload={"status": "sending", "updated_at": datetime.now(timezone.utc).isoformat()},
+        prefer="return=representation",
+    )
+    if not _response_json(claimed):
+        raise HTTPException(status_code=409, detail="This announcement is already being sent.")
+
+    try:
+        devices = await _registered_push_devices()
+        if not devices:
+            raise HTTPException(
+                status_code=409,
+                detail="No users have an opted-in Android device yet.",
+            )
+        accepted, failed = await _send_expo_pushes(
+            devices,
+            title=announcement["title"],
+            body=announcement["body"],
+            notification_id=str(announcement_id),
+        )
+        status = "sent" if accepted else "delivery_failed"
+        delivery_error = None if accepted else "The push provider rejected every message."
+    except HTTPException as error:
+        accepted, failed = 0, 0
+        status = "delivery_failed"
+        delivery_error = error.detail
+    await _supabase_request(
+        "PATCH",
+        "/rest/v1/admin_announcements",
+        params={"id": f"eq.{announcement_id}"},
+        payload={
+            "status": status,
+            "sent_at": datetime.now(timezone.utc).isoformat() if accepted else None,
+            "sent_count": accepted,
+            "failed_count": failed,
+            "delivery_error": delivery_error,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+    await _write_audit(
+        admin,
+        action="announcement.send",
+        resource_type="announcement",
+        resource_id=str(announcement_id),
+        details={"accepted": accepted, "failed": failed},
+    )
+    if not accepted:
+        raise HTTPException(
+            status_code=502,
+            detail=delivery_error or "The push provider could not deliver the notification.",
+        )
+    return {"status": status, "accepted": accepted, "failed": failed}
+
+
+@admin_router.post("/api/admin/users/{user_id}/push")
+async def send_direct_push(
+    user_id: UUID,
+    payload: DirectPushInput,
+    admin: dict = Depends(require_permission("content")),
+):
+    await _write_audit(
+        admin,
+        action="notification.direct_send",
+        resource_type="user",
+        resource_id=str(user_id),
+    )
+    created = await _supabase_request(
+        "POST",
+        "/rest/v1/admin_announcements",
+        payload={
+            "title": payload.title,
+            "body": payload.body,
+            "audience": "account",
+            "target_user_id": str(user_id),
+            "status": "sending",
+            "scheduled_at": None,
+            "created_by": admin["user_id"],
+        },
+        prefer="return=representation",
+    )
+    rows = _response_json(created)
+    if not rows:
+        raise HTTPException(status_code=502, detail="The notification could not be recorded.")
+    notification_id = str(rows[0]["id"])
+
+    try:
+        devices = await _registered_push_devices(user_id)
+        if not devices:
+            raise HTTPException(
+                status_code=404,
+                detail="This account has no opted-in Android device.",
+            )
+        accepted, failed = await _send_expo_pushes(
+            devices,
+            title=payload.title,
+            body=payload.body,
+            notification_id=notification_id,
+        )
+        status = "sent" if accepted else "delivery_failed"
+        delivery_error = None if accepted else "The push provider rejected every message."
+    except HTTPException as error:
+        accepted, failed = 0, 0
+        status = "delivery_failed"
+        delivery_error = error.detail
+
+    await _supabase_request(
+        "PATCH",
+        "/rest/v1/admin_announcements",
+        params={"id": f"eq.{notification_id}"},
+        payload={
+            "status": status,
+            "sent_at": datetime.now(timezone.utc).isoformat() if accepted else None,
+            "sent_count": accepted,
+            "failed_count": failed,
+            "delivery_error": delivery_error,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        },
+        prefer="return=minimal",
+    )
+    if not accepted:
+        raise HTTPException(
+            status_code=502,
+            detail=delivery_error or "The push provider could not deliver the notification.",
+        )
+    return {"status": status, "accepted": accepted, "failed": failed}
+
+
 @admin_router.get("/api/admin/tickets")
-async def list_tickets(admin: dict = Depends(require_permission("support"))):
+async def list_tickets(
+    page: int = Query(default=1, ge=1, le=10000),
+    admin: dict = Depends(require_permission("support")),
+):
     rows = await _rows(
         "admin_support_tickets",
-        {"select": "*", "order": "updated_at.desc", "limit": "200"},
+        {
+            "select": "*",
+            "order": "updated_at.desc",
+            "limit": "50",
+            "offset": str((page - 1) * 50),
+        },
     )
-    return {"tickets": rows}
+    return {"tickets": rows, "page": page}
 
 
 @admin_router.post("/api/admin/tickets")
@@ -966,14 +1350,21 @@ async def update_ticket(
 
 @admin_router.get("/api/admin/configuration")
 async def list_configuration(
+    page: int = Query(default=1, ge=1, le=10000),
     admin: dict = Depends(require_permission("configuration")),
 ):
     rows = await _rows(
         "admin_app_configuration",
-        {"select": "*", "order": "key.asc", "limit": "200"},
+        {
+            "select": "*",
+            "order": "key.asc",
+            "limit": "50",
+            "offset": str((page - 1) * 50),
+        },
     )
     return {
         "settings": rows,
+        "page": page,
         "delivery": (
             "Saved settings are not yet read by the mobile app; app-side "
             "rollout enforcement is not connected."
@@ -1009,10 +1400,11 @@ async def save_configuration(
 
 @admin_router.get("/api/admin/reports")
 async def admin_reports(
+    page: int = Query(default=1, ge=1, le=10000),
     admin: dict = Depends(require_permission("analytics")),
 ):
     overview = await admin_overview(admin)
-    users, _ = await _auth_users(1, 100)
+    users, _ = await _auth_users(page, 50)
     return {
         "overview": overview,
         "recent_users": [
@@ -1024,6 +1416,7 @@ async def admin_reports(
             }
             for user in users
         ],
+        "page": page,
         "note": (
             "User and ledger activity counts only; no platform revenue, "
             "commissions or refunds are inferred."

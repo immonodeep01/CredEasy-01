@@ -11,10 +11,165 @@
 
 <!-- Add completed features below this line -->
 
+### 2026-10-09 — Make Chotu widget layout responsive to launcher width
+**Feature:** Reduce Chotu home-screen widget clipping on launchers with narrower widget cells.
+**Status:** Responsive layout and provider sizing verified in an arm64 QA APK; launcher rendering still needs physical-device verification.
+**Summary:** The widget now accepts horizontal resizing from 220dp to 320dp, targets a four-cell-by-one-row footprint, and applies tighter control, waveform, and text spacing based on the launcher's reported width. Built `frontend/android/app/build/outputs/apk/release/app-release.apk` with arm64-only native libraries and an embedded JS bundle; it is debug-key signed for QA. SHA-256: `1926EC479E88EB08D07104029D377978EAC20238B134EF2D1AFD318F9DE2332C`.
+
+### 2026-10-09 — Prepare public Play account-deletion instructions
+**Feature:** Add a public, product-specific account-deletion information page for Play Console's Data safety declaration.
+**Status:** Website source and Managed WordPress package updated; publication is blocked until WordPress Admin access is available. The Play Console declaration remains incomplete.
+**Summary:** Added `website/delete-account.html` with the in-app request steps and clear details on cloud/local deletion, Google Drive backups, and other-device copies. Updated the WordPress theme generator, release checklist, and privacy/footer links; verified the live Managed WordPress site does not yet publish this route, so no unverified URL was entered in Play Console.
+
+### 2026-10-09 — Configure CredEasy Android AdMob IDs
+**Feature:** Replace Android AdMob test app and ad-unit IDs with the supplied CredEasy IDs.
+**Status:** Frontend configuration updated and arm64 QA APK rebuilt; live ad serving remains subject to AdMob approval and inventory.
+**Summary:** Configured Android App ID `ca-app-pub-7375403009647887~6318415112` and banner, interstitial, and native units `ca-app-pub-7375403009647887/3544912114`, `ca-app-pub-7375403009647887/2009661134`, and `ca-app-pub-7375403009647887/2336964191`. Updated app config, Android manifest, component unit selection, and local/example environment values. The arm64 QA APK at `frontend/android/app/build/outputs/apk/release/app-release.apk` embeds all three units and the supplied app ID in its manifest; only `arm64-v8a` libraries are packaged, including Oboe and the audio API. Size: 54,018,118 bytes; SHA-256: `2517807733924A3086D95FB21F56065275805A74C426DFFD514D2D0E76313388`. Debug-key signed for QA. iOS remains on Google test IDs because no iOS-specific production App ID or units were supplied.
+
+### 2026-10-09 — Pause business workspace deletion
+**Feature:** Temporarily remove the business deletion feature while preserving safeguards for workspaces deleted by earlier versions.
+**Status:** Frontend and SQL setup updated; arm64 QA APK built. The SQL change must be applied to Supabase to disable the deployed RPC.
+**Summary:** Removed the Ledger business-picker delete action, PIN/confirmation flow, client RPC, local deletion helper, and related translations. Updated `docs/enable-transaction-realtime.sql` to drop `delete_business_workspace(text)` while retaining workspace tombstones and stale-write guards. Built `frontend/android/app/build/outputs/apk/release/app-release.apk` from the updated source and verified it contains no deletion UI or RPC strings, only arm64 libraries, and both Oboe and the audio API library. SHA-256: `F487CCEA9395FC85CA8A5FAC28A6AFCB87720E7FA9E1800E0D2AA6CAE3B628A7`. It is debug-key signed for QA. Applying the updated SQL disables the RPC in the database; updating the app alone only removes its UI and callers.
+
+### 2026-10-09 — Pin account-deletion secret to active Cloud Run revision
+**Feature:** Resolve the mobile account-deletion response saying `SUPABASE_SERVICE_ROLE_KEY` is missing, despite the secret already being attached to Cloud Run.
+**Status:** Configured and verified on Cloud Run revision `credeasy-api-00033-wzm` with 100% traffic; user-authenticated deletion remains untested.
+**Summary:** Confirmed the app build targets the same Cloud Run service, the stored Secret Manager value is a `service_role` key for the configured Supabase project, and the runtime service account has Secret Accessor access. Rolled a fresh revision with the secret pinned to enabled version `1`; health returns `{"status":"ok"}` and an unauthenticated delete probe returns 401 without performing deletion. No authenticated account deletion request appeared in logs during diagnosis; retry from the signed-in app. Updated `docs/CLOUD-RUN-ACCOUNT-DELETION.md` to use a numbered secret version.
+
+### 2026-10-09 — Build arm64 release APK with business deletion
+**Feature:** Build a standalone Android release APK from the current frontend source, including the PIN-protected business deletion UI.
+**Status:** Build and APK signature verification passed.
+**Summary:** Built `frontend/android/app/build/outputs/apk/release/app-release.apk` (`com.credeasy.app`, version 2.17.3) with `-PreactNativeArchitectures=arm64-v8a`. Verified the embedded JavaScript bundle contains the business deletion labels and PIN prompt, all native libraries are arm64-only (including `liboboe.so` beside `libreact-native-audio-api.so`), and the APK is signed with the debug key for QA; it is not production/Play signing. SHA-256: `D1B433E5C7E2F0D6001FC706311078E9009B0C9193BAD972B0D3A9CE8D247B00`.
+
+### 2026-10-09 — Add PIN-protected business deletion
+**Feature:** Let users delete a business workspace from the Ledger business chooser without risking accidental removal or losing local data when cloud deletion fails.
+**Status:** Complete — frontend TypeScript check and focused ESLint passed.
+**Summary:** Added a separately accessible delete action for each business when multiple workspaces exist. It requires destructive confirmation and Security PIN verification, deletes signed-in cloud data through the existing authenticated RPC before removing local snapshots, supports explicitly local-only offline deletion, and prevents deletion of the final workspace.
+
+### 2026-10-09 — Switch Chotu to Gemini 2.5 Flash-Lite
+**Feature:** Use Gemini 2.5 Flash-Lite for Chotu's voice assistant instead of silently mapping the requested model to Gemini 3.5 Flash-Lite.
+**Status:** Deployed as Cloud Run revision `credeasy-api-00032-k5m`, receiving 100% traffic. The Supabase shared voice-quota RPC is still missing, so authenticated voice requests remain blocked before inference.
+**Summary:** Updated the backend default and model normalization to preserve `gemini-2.5-flash-lite`, configured Vertex AI in the supported `us-central1` region, and verified focused tests pass. Google lists this model for retirement on October 20, 2026; plan a replacement before then. Chotu requests will reach Vertex only after `public.consume_voice_request_limit()` is installed by applying `docs/enable-transaction-realtime.sql`.
+
+### 2026-10-09 — Diagnose Chotu Voice 503s After Vertex Deployment
+**Feature:** Trace the Chotu transcription and assistant HTTP 503 errors shown in the user's screenshots.
+**Status:** Backend and Vertex setup are deployed and healthy; voice remains blocked until the Supabase SQL setup is applied.
+**Summary:** Active-revision logs show authenticated `/api/voice/transcribe` and `/api/voice/assist` requests failing before provider calls because Supabase returns 404 for `public.consume_voice_request_limit()`. The handler intentionally fails closed to preserve the shared per-account request cap. Apply the full, safe-to-rerun `docs/enable-transaction-realtime.sql` in the Supabase SQL Editor for the app's project, then retry Chotu. Supabase CLI access was unavailable (local token is a placeholder); no quota guard was bypassed.
+
+### 2026-10-09 — Deploy Vertex-backed Chotu and Current Admin Backend
+**Feature:** Replace the stale Cloud Run backend that still sent Chotu requests to the depleted AI Studio project with the current Vertex-aware backend.
+**Status:** Deployed as `credeasy-api-00029-rdf`, receiving 100% traffic; `/api/health`, `/admin`, and `/api/admin/config` return HTTP 200. Authenticated in-app inference remains to be confirmed from a signed-in device.
+**Summary:** Cloud Run logs tied the AI Studio 402 to revision `credeasy-api-00027-cq6`, even though its environment already selected Vertex. Deployed the current backend with Cloud Build; verified Vertex model/location settings, enabled API, and runtime `roles/aiplatform.user`. Bound the existing Secret Manager `supabase-service-role-key` to `SUPABASE_SERVICE_ROLE_KEY` without exposing its value, and restored the documented one-instance minimum. The backend `.env` was excluded from the build context, and all 71 focused voice/admin tests passed.
+
+### 2026-10-09 — Rebuild Arm64 APK from Current Frontend
+**Feature:** Replace the push-configured QA APK that was built from an older clean frontend baseline and therefore omitted newer Inventory and Billing UI changes.
+**Status:** Built and verified as an arm64 QA APK from the current modified frontend; physical installation and on-device flow checks remain unverified.
+**Summary:** Built `frontend/android/app/build/outputs/apk/release/app-release-arm64-current-source-20261009-0300.apk` with the current Inventory screen and Standard/Retail Tax/Thermal bill templates. Verified the embedded bundle includes the current template and inventory-export UI, only `arm64-v8a` native libraries (including Oboe and audio API), and Firebase resources. TypeScript check and nine focused invoice/inventory tests passed. SHA-256: `33C16034BB00B8D1164DD272033686F924267ABF3C9D6571605032ECF20167E4`. The APK is debug-key signed for QA, not Play Store release.
+
+### 2026-10-09 — Fix Admin Notifications List Failure
+**Feature:** Restore the admin Notifications page, which returned an unreadable response because the deployed announcement-list handler referenced an undefined pagination variable.
+**Status:** Deployed to Cloud Run revision `credeasy-api-00027-cq6`, receiving 100% traffic; focused admin pagination and push regression tests passed (10 tests).
+**Summary:** Added bounded offset pagination to the isolated push-enabled backend handler, then fixed the admin UI's missing `pageActions` helper and wired its Previous/Next controls. Production JavaScript serves the helper and listener, `/api/health` returns 200, and the protected announcement endpoint returns the expected unauthenticated 401; an authenticated browser retry and real-device delivery remain unverified.
+
+### 2026-10-09 — Wire Firebase into Local Android Push Build
+**Feature:** Fix Android push registration failing because the local release APK lacked Firebase's native Google Services configuration.
+**Status:** Implemented and built as an arm64 QA APK; device registration and end-to-end delivery still need verification.
+**Summary:** Applied Expo Android prebuild with the local Firebase config, persisted Google Services Gradle plugin wiring, and rebuilt the release APK with Supabase public config. The local Gradle workflow is documented in `docs/PUSH-NOTIFICATIONS.md`; the APK uses the debug signing key.
+
+### 2026-10-08 — Audit Launch-Scale Readiness
+**Feature:** Audit CredEasy's schema, reads, voice-cost safeguards, storage uploads, and observability for a 10,000-user launch target.
+**Status:** Source changes and automated checks complete; staging load and live RLS query-plan verification are blocked because no staging database endpoint or credentials were provided.
+**Summary:** Added bounded pagination to cloud sync, legacy ledger lists, and admin tables; added shared voice quotas, provider circuit breakers, and media resizing/compression. Findings and the required migration/deployment sequence are documented in `docs/LAUNCH-SCALE-AUDIT.md`; do not claim a measured 10,000-user p95 until the staging load test is run.
+
+### 2026-10-08 — Stop Chotu Widget Recording Reliably and Audit Play Readiness
+**Feature:** Make the widget Stop action halt capture immediately and verify Android release readiness.
+**Status:** Widget cancellation fixed and validated with TypeScript, focused ESLint, 10 voice/ledger tests, and a successful Android release AAB build. Play Store submission remains blocked by signing, listing, deletion-request, and dependency-advisory checks documented in `docs/PLAY-STORE-SETUP.md`.
+**Summary:** Widget Stop now cancels the active PCM recorder and foreground microphone service before session/auth checks, and still stops the service if capture cancellation reports an error. In-app voice already stops native capture before transcription and assistant processing; the mic deliberately resumes after TTS while the conversation remains active. Updated compatible dependency pins remove the `compression`, `shell-quote`, and `source-map-js` advisories, but the production dependency audit still reports unpatched Expo build-toolchain advisories.
+
+### 2026-10-08 — Redesign the bill template picker
+**Feature:** Make invoice template selection feel like a focused, branded mobile preview.
+**Status:** Complete — strict TypeScript check and targeted ESLint passed.
+**Summary:** The swipeable picker now centers the template artwork in a green-accented preview, follows the active light/dark palette, and uses a fixed lower selection panel. Users can remember a default template per business while keeping the picker available for each new bill.
+
+### 2026-10-07 — Keep Chotu widget available with App Lock
+**Feature:** Stop App Lock from disabling the Android Chotu home-screen widget.
+**Status:** Complete — TypeScript, targeted ESLint, and ARM64 release APK build passed; APK contents verified.
+**Summary:** App Lock continues to protect the CredEasy app, while the widget no longer wipes its state or blocks voice turns and confirmed writes. Existing widget account/business validation and explicit transaction/stock confirmations remain in place.
+
+### 2026-10-07 — Use supplied bill templates and preserve invoice numbers
+**Feature:** Show the supplied invoice references in the bill template picker and retain invoice numbering across backups and reinstalls.
+**Status:** Complete — TypeScript check, targeted ESLint, and six invoice tests passed.
+**Summary:** The swipeable template chooser now displays the provided Standard, Retail Tax, and Thermal examples. Backup restore retains saved invoice numbers, the next sequence reconciles against saved bills, and shared/downloaded PDFs use the invoice number as the filename.
+
+### 2026-10-07 — Repair PIN SecureStore keys and ledger sync trigger
+**Feature:** Fix App Lock/Security PIN SecureStore errors and party cloud-sync failures.
+**Status:** Complete — frontend TypeScript check and targeted ESLint passed; the SQL migration must be reapplied to Supabase.
+**Summary:** PINs now use SecureStore-compatible keys while preserving migration from legacy AsyncStorage values. The ledger-owner trigger validates `party_id` only for transaction rows, avoiding field access errors during party upserts.
+
+### 2026-10-07 — Add Swipeable Bill Template Picker and Standard Invoice Layout
+**Feature:** Open a swipeable template chooser from every Create bill action and redesign Standard Invoice to match the supplied print-style reference.
+**Status:** Complete — TypeScript, targeted ESLint, six invoice/inventory regression tests, and Android release APK build passed; release APK native audio libraries verified.
+**Summary:** Users can compare sample layouts for Standard, Retail Tax, and Thermal bills, choose one before entering bill details, or change it from the form. Standard PDF and web previews now share a clean invoice layout with invoice metadata, customer details, itemized charges, totals, and a thank-you/contact footer.
+
+### 2026-10-07 — Harden Ledger Ownership, Workspace Deletion, and PIN Verification
+**Feature:** Prevent cross-account ledger ID collisions and stale writes into deleted workspaces; protect App Lock and Security PIN verification.
+**Status:** Implemented; isolated runtime validation and applying the Supabase migration remain outstanding.
+**Summary:** Ledger CRUD now forwards the verified caller token to Supabase, SQL guards preserve row ownership and party/business binding while serializing workspace writes against deletion, and PIN values/attempt counters use SecureStore with legacy migration and timed lockout.
+
+### 2026-10-07 — Prevent Chotu Widget Cropping and Deduct Bill Stock
+**Feature:** Keep Chotu's widget content within launcher bounds, center the empty-bill state lower in its page, and update existing inventory quantities when bills are saved.
+**Status:** Implemented and validated with strict TypeScript, targeted ESLint, and bill/invoice regression tests.
+**Summary:** Chotu's widget rows and controls are more compact to tolerate launcher size differences. Empty Billing now uses the available page height for its centered illustration and action; saved bills create sale movements for matching inventory items, while bills that would make stock negative are stopped before saving.
+
+### 2026-10-07 — Secure Inventory Deletion and Polish Billing/Widget States
+**Feature:** Keep Create bill in the empty-state area until a bill exists, require Security PIN for item deletion, and return widget errors to idle automatically.
+**Status:** Implemented and validated with strict TypeScript, targeted ESLint, and an arm64 release APK build; APK ABI and required assets verified.
+**Summary:** The empty bill screen now owns its Create bill action while saved-bill history retains the bottom-right action; inventory deletion still requires explicit confirmation and now verifies the Security PIN before removal. Chotu widget error states reset to idle after 5.5 seconds only if no newer state replaced them.
+
+### 2026-10-07 — Fix Bill Preview Templates and Add Ledger Guide
+**Feature:** Render bill previews from the selected/saved bill template, move bill creation to a floating action, add name-only inventory entries from bills, and introduce a first-open Ledger walkthrough.
+**Status:** Implemented and validated with strict TypeScript, targeted ESLint, invoice calculation regressions, and an Android JS bundle export. Web preview startup is blocked by the existing web-incompatible native AdMob import in the app root.
+**Summary:** Native preview now renders the generated standard, retail-tax, or thermal bill document, with tax-detail validation limited to retail invoices; Create bill is a bottom-right action, and inventory selection adds missing product names at zero stock without changing quantities. A swipeable guide appears once per account/offline scope and explains Ledger balances, Chotu, and home-screen widget setup.
+
+### 2026-10-07 — Add Inventory and Billing First-Use Guides
+**Feature:** Show swipeable onboarding walkthroughs the first time each account or offline user opens Inventory and Billing.
+**Status:** Implemented and validated with strict TypeScript and targeted ESLint.
+**Summary:** Inventory's three-page walkthrough and Billing's guide to templates, customer/items, and saving or sharing a bill each appear once per account or offline scope, regardless of business workspace. Inventory recognizes previously saved business-scoped completion flags, and its empty state uses the supplied shop illustration with an enlarged Add item action.
+
+### 2026-10-07 — Add Thermal Bill Template
+**Feature:** Add a compact thermal receipt option based on the supplied shop-bill image.
+**Status:** Complete — strict TypeScript, targeted ESLint, and receipt HTML/tax/discount/round-off assertions passed.
+**Summary:** Billing now offers Standard Invoice, Retail Tax Invoice and an 80 mm monochrome Thermal Bill. The receipt includes shop/customer details, numbered items, per-item price/discount/tax, explicit round-off, terms and a thank-you footer; its rounded net amount is the amount posted to the ledger and saved bill.
+
+### 2026-10-06 — Fix Retail Invoice Logo, QR, and Layout
+**Feature:** Include the saved business logo and payment QR in Retail Tax Invoice PDFs and align the printed layout with the supplied reference.
+**Status:** Complete — strict TypeScript, targeted ESLint, generated-HTML/image assertions, and arm64 release APK v2 signature verification passed (debug key, QA only).
+**Summary:** Fixed the logo picker so it saves to the logo field rather than overwriting the payment QR, and preserves the original logo aspect ratio. Retail invoice PDFs now embed local/cloud-cached logo and QR images as data URIs, show visible image-loading errors, and use the reference's compact invoice, tall item table, totals, and three-column footer.
+
+### 2026-10-06 — Add Retail Tax Invoice Template
+**Feature:** Let users choose between Standard Invoice and a detailed Retail Tax Invoice when creating a bill.
+**Status:** Implemented and validated with strict TypeScript, targeted ESLint, and retail calculation/amount-in-words assertions. Apply the updated `docs/enable-transaction-realtime.sql` setup before syncing invoice metadata to Supabase.
+**Summary:** Retail invoices collect seller, buyer, shipping, item, tax, payment and terms details; calculate discounts and item-level taxes with CGST/SGST or IGST; and render a matching PDF with totals and amount in words. Invoice number/details are persisted locally and in Supabase, while Standard Invoice calculations and output remain intact.
+
+### 2026-10-06 — Reduce Chotu Turn Latency
+**Feature:** Reduce avoidable wait time in Chotu's speech-to-reply flow.
+**Status:** Deployed as Cloud Run revision `credeasy-api-00020-cvl` with 100% traffic; `/api/health` returned `{"status":"ok"}`. Live end-to-end measurement from the user's device remains pending.
+**Summary:** Production logs showed an old 12.9-second Gemini request on revision 18; revision 19 requests were 1.7–2.8 seconds, while TTS took 0.65–1.85 seconds. The backend now caps Gemini at 192 output tokens, bounds Google TTS to three seconds without retries, reuses auth HTTP connections with a 2.5-second timeout, bounds STT stream finalization, and adds privacy-safe stage timing. All 78 backend tests passed. No app rebuild is needed for these backend-only changes.
+
+### 2026-10-06 — Reduce Chotu Cold-Start Delay
+**Feature:** Keep Chotu's Cloud Run backend warm between infrequent voice sessions.
+**Status:** Applied and verified; one minimum service instance is configured. A new authenticated app turn is still needed to measure the user's perceived improvement.
+**Summary:** Production logs showed the assistant request taking roughly 1.6–2.5 seconds and the separate speech-synthesis request another 1.0–1.6 seconds. Set the Cloud Run service minimum instance count to one to avoid scale-to-zero startup delay; this adds ongoing idle-instance billing, while model and TTS generation time remains provider-dependent. The existing Android app is unchanged.
+
 ### 2026-10-06 — Surface Gemini Credit Exhaustion and Diagnose Supabase Deletion
 **Feature:** Explain exhausted Gemini API credits to Chotu users and add safe upstream diagnostics for account-deletion failures.
-**Status:** Local regression tests pass; Cloud Run deployment started after push. Gemini service still requires its AI Studio project credits/postpay to be restored. Supabase HTTP 500 root cause depends on the next redacted upstream error log.
-**Summary:** Gemini HTTP 402 now returns actionable billing guidance without switching providers or exposing ledger context. Supabase deletion failures log only a bounded/redacted upstream code/message and request ID for diagnosis; error details remain hidden from the app. No account-deletion request was issued by the agent.
+**Status:** Cloud Run diagnostics identified the live blockers. Account deletion requires the updated Supabase SQL setup to be rerun; Chotu requires AI Studio prepay/postpay or an intentional Vertex AI integration change.
+**Summary:** Gemini HTTP 402 is caused by depleted AI Studio prepayment, and Google's separate $300 Cloud Free Trial credit is not applicable to Gemini API in AI Studio. Account deletion fails with Supabase `23503` on `party_deletions_user_id_fkey`; updated tombstone guards now skip nested FK cascades. The SQL update is prepared locally but has not been applied to Supabase. No deletion was run by the agent.
+
+### 2026-10-06 — Route Chotu Gemini Through Vertex AI
+**Feature:** Use the Cloud Run runtime identity to access Gemini on Vertex AI instead of the exhausted AI Studio API key.
+**Status:** Fixed and deployed as Cloud Run revision `credeasy-api-00018-nxk` with 100% traffic. Health check and minimal Vertex inference passed; an authenticated in-app retry remains the final user-side check.
+**Summary:** Live logs traced the HTTP 502 to Vertex returning 404 because Gemini 3.5 Flash-Lite is unavailable in `us-central1`. Switched to the supported `us` multi-region endpoint and host, verified a minimal JSON inference, passed 39 backend tests, and deployed the fix. Cloud Build now tags images with unique build IDs; its default service account received Cloud Run deploy and runtime-identity impersonation roles. The AI Studio key remains bound but unused in Vertex mode.
 
 ### 2026-10-06 — Fix Cloud Run Voice Assistant and Account Deletion
 **Feature:** Resolve the deployed Gemini model rejection and account-media cleanup 500.
@@ -70,6 +225,16 @@
 **Feature:** Stabilize noisy-room voice activity detection, avoid contacts permission prompts from Chotu, preserve full inventory context and party opening balances, route WhatsApp reminders to party chats, and remove splash-logo white framing.
 **Status:** Implementation and targeted checks passed; local Android release APK built successfully at `frontend/android/app/build/outputs/apk/release/app-release.apk`. The APK includes the embedded JavaScript bundle and required Oboe/audio libraries; physical-device validation remains pending.
 **Summary:** Chotu now calibrates a rolling noise floor and keeps a longer audio preroll, includes all local inventory items and movements in assistant context, and saves opening balances directly from the party balance form. Reminders use the shared direct-chat/QR helper and splash image/background use the same green. The widget now draws an immediate visible ready state before asynchronous session/storage hydration.
+
+### 2026-10-06 — Chotu Voice Detection Tuning
+**Feature:** Require clearer, sustained speech for voice activation and submit automatically soon after speech ends.
+**Status:** Implemented and validated. Ten focused tests, frontend TypeScript, frontend lint (zero errors; existing warnings remain), arm64 release build, and APK archive checks passed. Physical-device microphone testing remains pending.
+**Summary:** Native capture now requires four consecutive 100 ms frames above a stronger adaptive threshold; web capture requires three consecutive 100 ms meter samples. Both paths auto-submit after 450 ms without detected speech. The APK at `frontend/android/app/build/outputs/apk/release/app-release.apk` contains the embedded JavaScript bundle and arm64 Oboe/audio libraries. This intentionally favors close, clear speech over quiet speech and cannot distinguish every speech-like background sound.
+
+### 2026-10-06 — Reduce Chotu Model Input Costs
+**Feature:** Reduce unnecessary model input tokens without changing Chotu's model, voice, or response behavior.
+**Status:** Implemented and locally validated (42 backend tests passed); deployment and production usage verification pending.
+**Summary:** The backend sends compact allowlisted business context without internal IDs or unused fields and no longer repeats the action schema in the model prompt, while preserving answer-relevant facts and confirmation rules. Privacy-safe model, TTS, and streaming STT usage diagnostics contain no transcript or business content. These savings are not active in production until the intended backend changes are deployed.
 
 ### 2026-10-05 — Add Headless Chotu Android Widget
 **Feature:** Add a home-screen Chotu widget with voice capture, quick questions, spoken answers, confirmed ledger/inventory/party writes, and explicit permission/login setup.
@@ -780,3 +945,21 @@ Currency amounts are converted to spoken words in the shared TTS request path us
 
 ### Android account deletion deployment configuration
 Traced the missing `SUPABASE_SERVICE_ROLE_KEY` response to the Cloud Run API configured in the Android build. Added a Secret Manager runbook for the `credeasy-api` service; no secret was added to the app or repository. Cloud Run credentials are not available in this workspace, so the secret must be configured by a project operator before Android account deletion can succeed.
+
+### Admin OAuth callback and access restriction
+The admin console now completes session verification when Supabase emits the OAuth sign-in callback and displays backend access errors instead of leaving the page blank. Backend authorization is restricted to `immonodeep@gmail.com` and `monodeepdeb276@gmail.com`, even if other emails are added to bootstrap configuration or admin roles.
+
+### Billing history and invoice flow
+Billing now opens on a saved-bill register with bill preview and PDF download/share; new bills are reviewed before saving, and paid bills do not create ledger entries while unpaid bills do. Per-item GST rates are reflected in totals and invoice PDFs, and opted-in item quantities update inventory through recorded stock movements.
+
+### Android push notifications
+Implemented opt-in Android device registration, admin broadcasts and account-targeted messages, plus generic local reminders for newly appearing overdue balances and low-stock states. The current Cloud Run revision has an enabled `EXPO_ACCESS_TOKEN` secret binding and the local Firebase config is present. Remote delivery still requires confirming the push SQL migration and EAS FCM credential, then testing from an installed Android release.
+
+### Inventory, billing and ledger entry follow-up
+Inventory item creation and bill saves now show an interstitial after persistence succeeds; inventory edits and failed saves do not. A remembered invoice template bypasses the picker on later Create bill actions. The new-entry form keeps the current/default party context and removes the party-selection carousel. Push backend token configuration is present; an anonymous no-row probe confirms `push_devices` is private, but the full migration, EAS FCM credential and signed-in Android device delivery remain to be verified.
+
+### Chotu launcher discovery and login refresh
+The login page now follows the supplied green-ledger design, and Chotu's responsive widget supports varied launcher sizes. The Android provider receiver is exported in the checked-in manifest and Expo config plugin so launchers can discover it; the rebuilt debug-key QA APK is `frontend/android/app/build/outputs/apk/release/app-release.apk` (SHA-256 `BDD10B925A784428FAF0891F808EB684DD8E6C417B4B942E2C9030048BF2C76A`). Physical launcher behavior still needs device verification.
+
+### Chotu narrow-launcher crop fix
+The widget's state rows now take only the available parent width rather than requesting `match_parent` beside fixed-size microphone/action controls, preventing the controls from rendering beyond the widget bounds. TypeScript, targeted ESLint, and `:app:assembleRelease` pass; the updated debug-key QA APK is `frontend/android/app/build/outputs/apk/release/app-release.apk` (SHA-256 `1CA213AB45CA3A14D34A9B1BE907FBE78B10AFF6F3FC4CF07898D49FB7D80C57`).

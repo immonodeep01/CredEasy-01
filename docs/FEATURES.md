@@ -26,12 +26,12 @@ Re-audit of the codebase confirmed several items from the original list are **al
 |---|---|---|---|
 | 1 | Party Deletion | **Partially done** — `StorageService.deleteParty()` exists, used in tests, but no UI button. Still valid. | `storage-service.ts:133` |
 | 2 | Voice Action Dispatch | **Done** — full `runActions()` loop with ADD_TRANSACTION / ADD_PARTY / multi-step add-party state machine, contact search, opening balance flow, REMIND, NAVIGATE. | `voice-assistant.tsx:382-545` |
-| 3 | Bill History / View Saved Bills | **Not done** — bills are saved but no history UI. Still valid. | `billing.tsx` |
+| 3 | Bill History / View Saved Bills | **Done** — history-first bill register with template-specific saved-bill preview, PDF download/share, paid/unpaid ledger handling, per-item GST rates, and opt-in inventory additions. The Create bill action is in the empty-state area until the first bill exists, then floats above the bottom bar. | `billing.tsx`, `pdf.ts` |
 | 4 | Export to CSV/Excel | **Not done** — only PDF export. Still valid. | `reports.tsx:62-103` |
 | 5 | Transaction Search in Party Detail | **Not done** — search exists on dashboard/parties but not party-detail. Still valid. | `party-detail.tsx` |
 | 6 | WhatsApp Share for Party Balance | **Done** — `handleWhatsAppReminder()` opens `whatsapp://send?phone=91...` with balance message. | `party-detail.tsx:103-114` |
 | 7 | Smart Reminders (REMIND action) | **Done** — voice `REMIND` action wired to WhatsApp. Dashboard "Top 5" widget is the remaining piece. | `voice-assistant.tsx:523-530` |
-| 8 | Invoice Numbering | **Not done** — bills use random `newId('bill')`. Still valid. | `mock.ts:Bill` |
+| 8 | Invoice Numbering | **Done** — bills store sequential invoice numbers; next number recovers from saved numbers after reinstall or account re-login. | `billing.tsx`, `storage-service.ts`, `mock.ts:Bill` |
 | 9 | Multi-Currency | **Not done** — `formatMoney()` INR-only. Still valid. | `utils/ledger.ts` |
 | 10 | Hindi Number Input (Words-to-Digits) | **Not done** — backend already does this for voice. Still valid for typed input. | `add-transaction.tsx` |
 | 11 | Google Drive Backup/Restore | **Done** — signed-in users' ledger changes are backed up and restored on a clean install. | `google-drive.ts`, `useAutoBackup.ts` |
@@ -41,7 +41,7 @@ Re-audit of the codebase confirmed several items from the original list are **al
 | 15 | Local Notification Reminders | **Partial** — `expo-notifications` permission/scheduling helpers exist, but there is no current UI call to schedule a follow-up. The in-app notification center is separate. | `src/utils/notifications.ts`, `app/notifications.tsx` |
 | 16 | Customer Photo / Avatar | **Not done** — `photoUri?` field exists in `Party` type but no UI. Still valid. | `mock.ts:Party`, `add-party.tsx` |
 | 17 | Recurring Transactions | **Not done**. Still valid. | — |
-| 18 | Inventory Tracking | **Not done**. Still valid (large scope). | — |
+| 18 | Inventory Tracking | **Partially done** — item stock, low-stock alerts, movement history, bill-sale deductions, local-first sync, PIN-protected item deletion, and a per-business first-use guide are shipped. | `frontend/app/(tabs)/inventory.tsx` |
 | 19 | Cloud Sync Repair | **Deferred** — still out of scope. | `FIXING-GUIDE.md` |
 | 20 | Aging Report | **Not done**. Still valid. | `utils/ledger.ts`, `reports.tsx` |
 | 21 | SMS Auto-Parsing | **Not done**. Still valid (privacy-sensitive). | — |
@@ -53,10 +53,11 @@ These shipped but were never added to FEATURES.md — captured for completeness:
 - **Previous Ledger Import** — Onboarding accepts CSV files only. UTF-8/Western-encoded CSV parsing runs on-device, supports common ledger headers and CredEasy compacted multi-table exports, and shows all parsed rows for review before saving. PDF and Excel import options are not exposed. OkCredit backup-summary CSVs import party rows and signed current balances as opening balances; these exports contain no transaction history.
 - **PDF Statement Export per Party** — `partyStatementHtml()` generates a formatted PDF for a single party; PDF export is available to all users.
 - **Multilingual Voice Assistant** — Chotu replies use Gemini 3.5 Flash-Lite when `GEMINI_API_KEY` is set. Native speech uses Google Cloud Speech-to-Text v2 `chirp_3` streaming with 16 kHz mono PCM, interim results, and adaptive client-side VAD; web speech retains automatic decoding of audio uploads. Speech synthesis uses Google Cloud Text-to-Speech and returns MP3. Setup steps and required IAM roles are in [VOICE-ASSISTANT.md](./VOICE-ASSISTANT.md). Existing speech providers remain fallbacks only while Google Cloud is unconfigured; configured Google failures are surfaced without provider switching. After the user starts a mic session, the native stream ends each utterance after a detected pause and Chotu resumes listening after spoken replies; silence-only captures and overlong utterances are bounded. Keep all provider credentials server-side, never in the mobile app.
-- **App PIN + Biometric Lock** — `AppLockScreen` + `expo-secure-store` with AsyncStorage fallback.
+- **App PIN + Biometric Lock** — PINs and failed-attempt state use `expo-secure-store`; legacy plaintext PINs migrate before use, and five consecutive failures lock PIN verification for five minutes.
 - **Google Sign-In (Supabase OAuth)** — Profile avatar, name, email displayed in Settings.
 - **Receipt/Bill photo attachment on transactions** — `Transaction.photoUri?` field exists in `mock.ts:25` but no UI.
-- **GST Toggle (18%) on Bills** — Subtotal/GST/grand total breakdown in `billing.tsx`.
+- **Invoice Templates on Bills** — Every Create bill action opens a swipeable, full-screen selector for Standard Invoice, Retail Tax Invoice, and Thermal Bill, with large sample previews, a persistent select action, and an optional per-business remembered default; the picker remains available each time and templates can also be changed from the form. Standard uses a clean print-style invoice with seller/contact details, invoice number/date, bill-to details, item table, totals, and a thank-you footer. Retail Tax Invoice collects billing/shipping and seller details, HSN/SAC and item-level discounts/tax, then exports a tax-breakdown PDF; its PDF embeds the separately saved business logo (legacy profile-photo fallback) and payment QR and includes terms, payment details, and signature blocks. Thermal Bill produces a compact 80 mm monochrome receipt with optional GST, item discounts, round-off and a net amount matching the ledger.
+- **First-use walkthroughs** — Ledger, Inventory and Billing each show a swipeable guide once per signed-in account or offline scope, independent of the selected business workspace. Ledger covers party balances, Chotu and adding the home-screen widget; Inventory covers products, low-stock alerts and movements; Billing covers templates, bill details and save/share actions.
 - **Two sign-out paths** — "Keep data on phone" vs "Back up and remove" — both gated by cloud-push success.
 - **Account deletion** — Hits Supabase admin API to delete the auth user.
 
@@ -89,11 +90,9 @@ These leverage existing infrastructure and require minimal new code.
 
 ### 3. Bill History / View Saved Bills
 
-- **Description:** Add a "Bill History" section in `billing.tsx` that lists previously generated bills, with view/share actions.
-- **Value Proposition:** Users generate bills but have no way to view, reprint, or share past bills. OkCredit, Vyapar, and myBillBook all show a bill history. The `Bill` data structure already exists; the UI just doesn't display it.
-- **Integration:** Add a collapsible `FlatList` section in `billing.tsx` (below the create form) or a dedicated sub-screen accessible from a history tab. Fetch from `StorageService.getBills()`, group by date, show party name + total + status (UNPAID/PAID). Add "View" (re-render to PDF) and "Share" actions. Add a "Mark Paid" button that converts the UNPAID bill to a paid transaction in the ledger.
-- **Complexity:** Low — same component structure as the existing items list, ~40 lines for the list, ~20 more for the detail/re-share.
-- **Rationale:** `StorageService.addBill()` already persists complete bill objects. The data is sitting in AsyncStorage unused. Competitor parity is table stakes.
+- **Status:** Implemented. Billing opens on the saved-bill register; selecting a bill opens its saved details with PDF download and sharing actions.
+- **Payment and preview:** New bills are reviewed before saving. Unpaid bills create a customer-ledger debit; paid bills are saved without a ledger transaction.
+- **Tax and inventory:** Each bill item can use a custom GST rate across invoice templates. Users can opt to add an item's name to inventory; new items start with zero stock, and existing stock is never changed by this option.
 
 ### 4. Export to CSV/Excel
 
@@ -323,7 +322,6 @@ Patterns that appear in nearly every competitor and would benefit CredEasy:
 2. Transaction Search in Party Detail (#5) — 15 min
 3. WhatsApp Share for Party Balance (#6) — 30 min
 4. Voice Action Dispatch (#2) — 2 hours
-5. Bill History (#3) — 1 hour
 
 **Implement second (next 2 weeks):**
 6. CSV Export (#4)

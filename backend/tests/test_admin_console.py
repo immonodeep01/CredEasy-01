@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from pathlib import Path
 
@@ -27,7 +28,9 @@ def client(monkeypatch):
     test_client.app.dependency_overrides.clear()
 
 
-def authenticated(client, *, user_id=OWNER_ID, email="owner@example.com"):
+def authenticated(
+    client, *, user_id=OWNER_ID, email="immonodeep@gmail.com"
+):
     client.app.dependency_overrides[admin_console._authenticated_user] = (
         lambda: {
             "user_id": user_id,
@@ -43,6 +46,253 @@ def response(status=200, payload=None):
     return httpx.Response(status, json=payload if payload is not None else {})
 
 
+def test_admin_response_accepts_partial_content():
+    result = admin_console._response_json(response(206, [{"id": "entry"}]))
+
+    assert result == [{"id": "entry"}]
+
+
+def test_push_registration_uses_the_verified_account_id(client, monkeypatch):
+    authenticated(client, user_id=STAFF_ID, email="user@example.com")
+    calls = []
+
+    async def capture_request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return response(204)
+
+    monkeypatch.setattr(admin_console, "_supabase_request", capture_request)
+    result = client.post(
+        "/api/push/device",
+        json={
+            "expo_push_token": "ExpoPushToken[abcdefghijklmnopqrstuv]",
+            "platform": "android",
+        },
+    )
+
+    assert result.status_code == 200
+    assert result.json() == {"registered": True}
+    payload = calls[0][2]["payload"]
+    assert payload["expo_push_token"] == "ExpoPushToken[abcdefghijklmnopqrstuv]"
+    assert payload["user_id"] == STAFF_ID
+    assert payload["platform"] == "android"
+    assert isinstance(payload["updated_at"], str)
+
+
+def test_push_registration_rejects_malformed_tokens_before_writing(client, monkeypatch):
+    authenticated(client)
+
+    async def unexpected_request(*args, **kwargs):
+        pytest.fail("invalid push tokens must be rejected before persistence")
+
+    monkeypatch.setattr(admin_console, "_supabase_request", unexpected_request)
+    result = client.post(
+        "/api/push/device",
+        json={"expo_push_token": "not-a-token", "platform": "android"},
+    )
+
+    assert result.status_code == 422
+
+
+def test_push_unregistration_is_scoped_to_the_verified_account(client, monkeypatch):
+    authenticated(client, user_id=STAFF_ID, email="user@example.com")
+    calls = []
+
+    async def capture_request(method, path, **kwargs):
+        calls.append((method, path, kwargs))
+        return response(204)
+
+    monkeypatch.setattr(admin_console, "_supabase_request", capture_request)
+    result = client.request(
+        "DELETE",
+        "/api/push/device",
+        json={"expo_push_token": "ExpoPushToken[abcdefghijklmnopqrstuv]"},
+    )
+
+    assert result.status_code == 200
+    assert calls[0][2]["params"] == {
+        "expo_push_token": "eq.ExpoPushToken[abcdefghijklmnopqrstuv]",
+        "user_id": f"eq.{STAFF_ID}",
+    }
+
+
+def test_push_unregistration_succeeds_when_device_table_is_not_installed(client, monkeypatch):
+    authenticated(client, user_id=STAFF_ID, email="user@example.com")
+
+    async def missing_table(*args, **kwargs):
+        return response(404)
+
+    monkeypatch.setattr(admin_console, "_supabase_request", missing_table)
+    result = client.request(
+        "DELETE",
+        "/api/push/device",
+        json={"expo_push_token": "ExpoPushToken[abcdefghijklmnopqrstuv]"},
+    )
+
+    assert result.status_code == 200
+    assert result.json() == {"registered": False}
+
+
+def test_direct_push_is_scoped_to_the_selected_account(client, monkeypatch):
+    authenticated(client)
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "immonodeep@gmail.com")
+    target_id = "99999999-2222-3333-4444-555555555555"
+    announcement_id = "77777777-2222-3333-4444-555555555555"
+    writes = []
+    deliveries = []
+
+    async def capture_request(method, path, **kwargs):
+        writes.append((method, path, kwargs))
+        if method == "POST" and path == "/rest/v1/admin_announcements":
+            return response(201, [{"id": announcement_id}])
+        return response(204)
+
+    async def registered_devices(user_id=None):
+        assert str(user_id) == target_id
+        return [{"expo_push_token": "ExpoPushToken[abcdefghijklmnopqrstuv]"}]
+
+    async def send_pushes(devices, **kwargs):
+        deliveries.append((devices, kwargs))
+        return 1, 0
+
+    async def audit(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(admin_console, "_supabase_request", capture_request)
+    monkeypatch.setattr(admin_console, "_registered_push_devices", registered_devices)
+    monkeypatch.setattr(admin_console, "_send_expo_pushes", send_pushes)
+    monkeypatch.setattr(admin_console, "_write_audit", audit)
+
+    result = client.post(
+        f"/api/admin/users/{target_id}/push",
+        json={"title": "Store update", "body": "A new update is available."},
+    )
+
+    assert result.status_code == 200
+    assert result.json() == {"status": "sent", "accepted": 1, "failed": 0}
+    created = writes[0][2]["payload"]
+    assert created["audience"] == "account"
+    assert created["target_user_id"] == target_id
+    assert deliveries[0][1]["notification_id"] == announcement_id
+
+
+def test_broadcast_send_claims_only_an_all_user_draft(client, monkeypatch):
+    authenticated(client)
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "immonodeep@gmail.com")
+    announcement_id = "77777777-2222-3333-4444-555555555555"
+    writes = []
+
+    async def rows(table, params):
+        assert table == "admin_announcements"
+        return [{
+            "id": announcement_id,
+            "title": "Service update",
+            "body": "A new update is available.",
+            "audience": "all",
+            "status": "draft",
+        }]
+
+    async def capture_request(method, path, **kwargs):
+        writes.append((method, path, kwargs))
+        return response(200, [{"id": announcement_id}]) if method == "PATCH" and kwargs.get("prefer") == "return=representation" else response(204)
+
+    async def registered_devices(user_id=None):
+        assert user_id is None
+        return [{"expo_push_token": "ExpoPushToken[abcdefghijklmnopqrstuv]"}]
+
+    async def send_pushes(devices, **kwargs):
+        return 1, 0
+
+    async def audit(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(admin_console, "_rows", rows)
+    monkeypatch.setattr(admin_console, "_supabase_request", capture_request)
+    monkeypatch.setattr(admin_console, "_registered_push_devices", registered_devices)
+    monkeypatch.setattr(admin_console, "_send_expo_pushes", send_pushes)
+    monkeypatch.setattr(admin_console, "_write_audit", audit)
+
+    result = client.post(f"/api/admin/announcements/{announcement_id}/send")
+
+    assert result.status_code == 200
+    assert result.json() == {"status": "sent", "accepted": 1, "failed": 0}
+    assert writes[0][2]["params"]["status"] == "eq.draft"
+
+
+def test_push_delivery_fails_closed_without_expo_access_token(monkeypatch):
+    monkeypatch.delenv("EXPO_ACCESS_TOKEN", raising=False)
+
+    with pytest.raises(admin_console.HTTPException) as error:
+        asyncio.run(
+            admin_console._send_expo_pushes(
+                [{"expo_push_token": "ExpoPushToken[abcdefghijklmnopqrstuv]", "user_id": STAFF_ID}],
+                title="Update",
+                body="A new update is available.",
+                notification_id="77777777-2222-3333-4444-555555555555",
+            )
+        )
+
+    assert error.value.status_code == 503
+
+
+@pytest.mark.parametrize(
+    ("handler", "table", "response_key"),
+    [
+        (admin_console.list_admin_content, "admin_content_items", "items"),
+        (admin_console.list_announcements, "admin_announcements", "items"),
+        (admin_console.list_tickets, "admin_support_tickets", "tickets"),
+        (admin_console.list_configuration, "admin_app_configuration", "settings"),
+    ],
+)
+def test_admin_table_pages_have_a_hard_limit_and_offset(
+    monkeypatch, handler, table, response_key
+):
+    requests = []
+
+    async def capture_rows(requested_table, params):
+        requests.append((requested_table, params))
+        return []
+
+    monkeypatch.setattr(admin_console, "_rows", capture_rows)
+    result = asyncio.run(handler(page=3, admin={"user_id": OWNER_ID}))
+
+    assert result[response_key] == []
+    assert result["page"] == 3
+    assert requests == [
+        (
+            table,
+            {
+                "select": "*",
+                "order": (
+                    "updated_at.desc"
+                    if table in {"admin_content_items", "admin_support_tickets"}
+                    else "created_at.desc"
+                    if table == "admin_announcements"
+                    else "key.asc"
+                ),
+                "limit": "50",
+                "offset": "100",
+            },
+        )
+    ]
+
+
+def test_admin_role_list_pages_have_a_hard_limit_and_offset(monkeypatch):
+    requests = []
+
+    async def capture_request(method, path, *, params=None, **kwargs):
+        requests.append((method, path, params))
+        return response(200, [])
+
+    monkeypatch.setattr(admin_console, "_supabase_request", capture_request)
+    result = asyncio.run(
+        admin_console.list_admin_roles(page=3, admin={"user_id": OWNER_ID})
+    )
+
+    assert result == {"roles": [], "page": 3}
+    assert requests[0][2]["limit"] == "50"
+    assert requests[0][2]["offset"] == "100"
+
+
 def test_admin_console_page_and_client_assets_are_served(client):
     assert client.get("/admin").status_code == 200
     assert client.get("/admin/assets/app.js").status_code == 200
@@ -55,9 +305,16 @@ def test_admin_api_rejects_an_unauthenticated_request(client):
     assert result.status_code == 401
 
 
-def test_configured_bootstrap_owner_gets_owner_access(client, monkeypatch):
-    authenticated(client, email=" OWNER@example.com ")
-    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "owner@example.com")
+@pytest.mark.parametrize(
+    "email",
+    [" IMMONODEEP@gmail.com ", "monodeepdeb276@gmail.com"],
+)
+def test_configured_bootstrap_owner_gets_owner_access(client, monkeypatch, email):
+    authenticated(client, email=email)
+    monkeypatch.setenv(
+        "ADMIN_BOOTSTRAP_EMAILS",
+        "immonodeep@gmail.com,monodeepdeb276@gmail.com",
+    )
 
     result = client.get("/api/admin/me")
 
@@ -78,12 +335,31 @@ def test_account_without_an_admin_role_is_denied(client, monkeypatch):
     assert result.status_code == 403
 
 
+def test_only_allowlisted_google_accounts_can_access_admin(client, monkeypatch):
+    authenticated(client, email="unlisted@example.com")
+    monkeypatch.setenv(
+        "ADMIN_BOOTSTRAP_EMAILS",
+        "immonodeep@gmail.com,monodeepdeb276@gmail.com,unlisted@example.com",
+    )
+
+    async def unexpected_request(*args, **kwargs):
+        pytest.fail("unlisted accounts must be rejected before role lookup")
+
+    monkeypatch.setattr(admin_console, "_supabase_request", unexpected_request)
+    result = client.get("/api/admin/me")
+
+    assert result.status_code == 403
+    assert result.json()["detail"] == (
+        "This Google account is not allowed to access the admin console."
+    )
+
+
 def test_unverified_identity_cannot_use_bootstrap_access(client, monkeypatch):
-    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "owner@example.com")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "immonodeep@gmail.com")
     client.app.dependency_overrides[admin_console._authenticated_user] = (
         lambda: {
             "user_id": OWNER_ID,
-            "email": "owner@example.com",
+            "email": "immonodeep@gmail.com",
             "email_confirmed": False,
         }
     )
@@ -94,7 +370,9 @@ def test_unverified_identity_cannot_use_bootstrap_access(client, monkeypatch):
 
 
 def test_finance_role_cannot_read_admin_configuration(client, monkeypatch):
-    authenticated(client, user_id=STAFF_ID, email="finance@example.com")
+    authenticated(
+        client, user_id=STAFF_ID, email="monodeepdeb276@gmail.com"
+    )
 
     async def finance_role(*args, **kwargs):
         return response(200, [{"role": "finance"}])
@@ -109,7 +387,7 @@ def test_bootstrap_owner_can_suspend_user_and_audit_the_action(
     client, monkeypatch
 ):
     authenticated(client)
-    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "owner@example.com")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "immonodeep@gmail.com")
     calls = []
 
     async def fake_request(method, path, **kwargs):
@@ -136,7 +414,7 @@ def test_bootstrap_owner_can_suspend_user_and_audit_the_action(
 
 def test_admin_cannot_suspend_its_own_account(client, monkeypatch):
     authenticated(client)
-    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "owner@example.com")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "immonodeep@gmail.com")
 
     async def unexpected_request(*args, **kwargs):
         pytest.fail(
@@ -153,7 +431,7 @@ def test_admin_cannot_suspend_its_own_account(client, monkeypatch):
 
 def test_bootstrap_owner_can_verify_email_after_auditing(client, monkeypatch):
     authenticated(client)
-    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "owner@example.com")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "immonodeep@gmail.com")
     calls = []
 
     async def fake_request(method, path, **kwargs):
@@ -179,7 +457,7 @@ def test_bootstrap_owner_can_verify_email_after_auditing(client, monkeypatch):
 
 def test_admin_reads_use_service_role_only_on_the_backend(client, monkeypatch):
     authenticated(client)
-    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "owner@example.com")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "immonodeep@gmail.com")
     requests = []
 
     async def fake_request(self, method, url, headers=None, **kwargs):
@@ -213,7 +491,9 @@ def test_admin_reads_use_service_role_only_on_the_backend(client, monkeypatch):
 
 
 def test_non_owner_cannot_grant_staff_roles(client, monkeypatch):
-    authenticated(client, user_id=STAFF_ID, email="admin@example.com")
+    authenticated(
+        client, user_id=STAFF_ID, email="monodeepdeb276@gmail.com"
+    )
 
     async def admin_role(*args, **kwargs):
         return response(200, [{"role": "admin"}])
@@ -233,7 +513,7 @@ def test_non_owner_cannot_grant_staff_roles(client, monkeypatch):
 
 def test_owner_cannot_grant_role_to_a_mismatched_email(client, monkeypatch):
     authenticated(client)
-    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "owner@example.com")
+    monkeypatch.setenv("ADMIN_BOOTSTRAP_EMAILS", "immonodeep@gmail.com")
     calls = []
 
     async def target_account(*args, **kwargs):

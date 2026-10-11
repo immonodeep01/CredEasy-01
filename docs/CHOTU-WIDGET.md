@@ -10,21 +10,30 @@ and MP3 TTS requests are shared with the in-app assistant.
 
 The widget supports conversation, ledger and inventory questions and confirmed
 transaction and stock-movement writes. New parties cannot be created from the
-widget. Its compact horizontal idle row has one control: the microphone on the
-right. While listening, it shows the recognized words and waveform, with Stop
+widget. Its compact horizontal idle row keeps the prompt text in the center and
+the microphone on the right. While listening, it shows the recognized words and waveform, with Stop
 immediately left of Send at the right edge. Speech is submitted only when Send
 is tapped; Stop discards it. In result and confirmation states, the only control
 is the microphone, except proposed transactions show explicit **Yes** and **No**
 buttons; stock changes continue to use spoken yes/no confirmation. All writes
 are revalidated against active account/business data before saving. It uses
-CredEasy green accents and the saved light/dark theme. The launcher provider is
-fixed to a 250dp by 70dp footprint,
-approximately four home-screen icons wide and one row high. `NAVIGATE` and
+CredEasy green accents and the saved light/dark theme. The launcher provider
+targets two launcher cells and one row, with a 160dp minimum width and 68dp
+minimum height. It can resize horizontally up to 400dp and vertically up to
+104dp, accommodating launchers with different cell sizes and padding. The
+layout uses the launcher-reported width and height to compact text, controls,
+and waveform bars when space is limited. Each state row uses the space left
+inside the widget instead of requesting the full parent width, so the fixed
+mic and action buttons stay inside the card on launchers with unusual padding.
+`NAVIGATE` and
 `REMIND` need a visible app/share screen; the widget explains that limitation
 and does not launch the app or send a reminder.
 On add, resize, and periodic refresh, the headless handler paints a ready view
 before loading account/session and saved widget state, so storage or auth
 initialization does not leave the launcher's blank placeholder visible.
+An active **Stop** click is handled before session validation: it cancels the
+PCM capture and stops the microphone foreground service before loading saved
+widget state. Stopping never submits the captured transcript.
 
 The package's default headless task timeout is 30 seconds, too short for speech
 capture followed by transcription, assistant generation, and TTS. The focused
@@ -37,10 +46,11 @@ by its headless tree builder.
 ## Permissions and setup
 
 The Expo config includes the widget library plugin and
-`frontend/plugins/with-chotu-widget`. The latter adds microphone foreground
-service and notification permissions, service declaration, and native bridge
-registration/copying. The widget uses CredEasy's Google speech capture rather
-than Android `SpeechRecognizer`.
+`frontend/plugins/with-chotu-widget`. The latter exports the app-widget
+provider receiver so Android launchers can discover and bind it, and adds
+microphone foreground-service and notification permissions, the service
+declaration, and native bridge registration/copying. The widget uses CredEasy's
+Google speech capture rather than Android `SpeechRecognizer`.
 The package plugin generates the resizable provider, preview image, and
 30-minute update behavior. No generated `android/` source needs manual edits.
 
@@ -49,6 +59,10 @@ once and grant microphone and notification access. If a permission is later
 revoked, the widget shows an explicit setup action; it never requests permission
 from the widget itself. Logging in from the widget is also an explicit action.
 After login/onboarding, CredEasy returns to Chotu.
+The widget remains available when App Lock is enabled; App Lock continues to
+protect the app interface, while widget actions retain their normal account,
+business, and confirmation checks. Keep the widget on a device home screen only
+when its visible content is appropriate for that device.
 
 ## Install and build
 
@@ -77,11 +91,16 @@ remain unchanged.
   add/rescale Chotu. Verify the preview, light/dark appearance, compact
   horizontal idle row with a right-aligned microphone, and state after
   removing/re-adding it.
-- From Settings, grant microphone and notification access. Tap the widget mic
+- From Settings, grant microphone and notification access. Check that all
+  widget states have clear margins from the launcher edges on more than one
+  device size. Tap the widget mic
   with CredEasy closed; verify the listening notification, interim transcript,
   Stop and Send controls, and that tapping Send starts processing and spoken TTS.
 - Verify Stop discards the transcript without sending it, and silence does not
   submit a command automatically.
+- Start another listen, expire the app session or disable networking, then tap
+  Stop. Verify capture and the foreground notification stop without waiting for
+  session validation or sending the transcript.
 - Propose a transaction and verify Yes saves it exactly once while No leaves
   data unchanged; transaction confirmation must not require speaking. Propose
   a stock movement and say “yes” to save or “no” to cancel. Ask to add a party
@@ -93,6 +112,8 @@ remain unchanged.
 - Test widget mic startup and confirmation when logged out or when the session
   expires. The widget should show **Log in to CredEasy**; only tapping it may
   open login, and successful login should return to Chotu.
+- Enable App Lock and verify the app still requires its PIN while the home-screen
+  widget remains usable and proposed ledger/stock changes still require confirmation.
 - Deny microphone permission initially, deny it permanently, and revoke it
   after setup. Verify the widget directs the user to its setup screen/Android
   Settings without launching automatically. Repeat for notifications on

@@ -19,9 +19,10 @@ available to that service.
    Accessor** on this secret only.
 4. Edit and deploy a new revision of `credeasy-api`. Under **Variables &
    Secrets**, add an environment variable named exactly
-   `SUPABASE_SERVICE_ROLE_KEY`, sourced from the secret and its latest enabled
-   version. Keep the existing `SUPABASE_URL` and `SUPABASE_ANON_KEY`
-   configuration unchanged.
+   `SUPABASE_SERVICE_ROLE_KEY`, sourced from an enabled, numbered secret
+   version. Pin the version rather than using `latest` so each revision starts
+   with the explicitly selected credential. Keep the existing `SUPABASE_URL`
+   and `SUPABASE_ANON_KEY` configuration unchanged.
 5. Wait for the new revision to become ready. Verify
    `https://credeasy-api-634736672458.asia-south1.run.app/api/health` returns
    `{"status":"ok"}`, then retry **Settings → Delete account** in the Android
@@ -34,7 +35,8 @@ must leave local data intact; do not clear it manually as part of setup.
 
 The repository includes `backend/Dockerfile` and a root-level
 `cloudbuild.yaml`. The trigger builds only the backend directory, pushes an
-image to Artifact Registry, and updates the existing `credeasy-api` service.
+image tagged with the unique Cloud Build ID to Artifact Registry, and updates
+the existing `credeasy-api` service.
 The backend Docker context excludes `.env` files; provider and Supabase secrets
 must remain configured on the Cloud Run runtime service.
 
@@ -63,11 +65,42 @@ Before creating a trigger:
 The deployment updates the container image of the existing service; it does
 not set or expose secret values. Confirm the service still has
 `SUPABASE_SERVICE_ROLE_KEY` and `GEMINI_API_KEY` configured from Secret
-Manager. Set `GEMINI_MODEL` to `gemini-3.5-flash-lite` if it is explicitly set
-to the retired `gemini-2.5-flash-lite` model. A successful `/api/health`
-check does not validate either provider integration.
+Manager. As of 2026-10-09, the active Cloud Run revision pins
+`SUPABASE_SERVICE_ROLE_KEY` to version `1` of `supabase-service-role-key`.
+After key rotation, pin the new enabled version and deploy a fresh revision.
+Chotu currently uses Vertex AI with
+`GEMINI_MODEL=gemini-2.5-flash-lite` and
+`VERTEX_AI_LOCATION=us-central1`; Google lists this model for retirement on
+October 20, 2026 ([model lifecycle](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions)),
+so migrate to a supported replacement before that date. A successful
+`/api/health` check does not validate either provider integration.
+
+Chotu's Vertex AI setup is separate from the AI Studio Gemini API key:
+`GEMINI_PROVIDER=vertex`, `GOOGLE_CLOUD_PROJECT=first-site-506918-r5`, and
+`VERTEX_AI_LOCATION=us-central1` configure the Gemini 2.5 Flash-Lite regional
+endpoint. Grant `roles/aiplatform.user` to the Cloud Run runtime service
+account. The existing `GEMINI_API_KEY` secret can remain bound during
+migration; it is not used while `GEMINI_PROVIDER=vertex`.
 
 If Supabase Auth returns an error during account deletion, the backend logs its
 error code, a bounded and redacted error message, and the Supabase request ID
 when supplied. Use those fields in Cloud Run Logs Explorer to diagnose an
 upstream HTTP 500; the client does not receive internal Supabase details.
+
+### Fix the tombstone foreign-key failure
+
+The deployed service logged Supabase error `23503` on
+`party_deletions_user_id_fkey`. The sync setup's delete triggers were trying to
+create party/transaction/bill/recurring/inventory tombstones while Supabase
+Auth was cascading deletion of the owning user, so those new tombstones failed
+their foreign key back to `auth.users`.
+
+The updated `docs/enable-transaction-realtime.sql` keeps tombstones for direct
+record deletes but skips them during nested foreign-key cascade deletes. In
+the Supabase SQL Editor for the same project used by the app, rerun the entire
+updated `enable-transaction-realtime.sql` setup script. It is designed to be
+safe to rerun and updates the trigger functions in place. Do not run
+`docs/supabase-migration.sql`; that separate migration drops tables. After the
+updated setup completes, retry account deletion from the app only if deletion
+is still intended. This fix is a Supabase SQL change; it does not require a
+new Android APK or Cloud Run deployment.

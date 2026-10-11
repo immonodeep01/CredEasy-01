@@ -12,14 +12,19 @@ role key for administrative reads and writes.
    `anon` or `authenticated` RLS policies.
 2. Configure the backend with `SUPABASE_URL`, `SUPABASE_ANON_KEY`,
    `SUPABASE_SERVICE_ROLE_KEY`, and `ADMIN_BOOTSTRAP_EMAILS`. Set the bootstrap
-   variable to a comma-separated allowlist of verified Google account emails.
+   variable to `immonodeep@gmail.com,monodeepdeb276@gmail.com`. The backend
+   independently enforces this two-address allowlist on every admin request;
+   adding another address to the environment or granting it a database role
+   does not grant console access.
    Keep the service role key in the backend's secret store only; it is never
    sent to the browser.
 3. In Supabase Auth, enable Google sign-in and allow the deployed backend's
    exact `/admin` URL as a redirect URL. The admin client requests only
    `openid email profile`; it does not request Google Drive access.
 4. Deploy/restart the backend and open `https://<backend-host>/admin`. Sign in
-   with an allowlisted owner account. Use the User management page to copy an
+   with either allowlisted owner account. The page completes the admin check
+   when the OAuth callback restores the session and shows access errors instead
+   of remaining blank. Use the User management page to copy an
    existing account UUID, then grant staff a least-privilege role from Roles &
    permissions.
 5. Remove departed bootstrap owners from `ADMIN_BOOTSTRAP_EMAILS`, and review
@@ -37,9 +42,15 @@ successful connection.
   activity/audit log, support ticket tracking, read-only business transactions
   and bills, connected account/workspace metrics, and CSV exports.
 - **Limited/draft only:** CMS content is stored for review but the mobile app
-  does not consume it; announcements are drafts only and are not delivered;
-  app configuration is stored but not yet read by the app; session management
-  revokes every session for an account but does not list individual devices.
+  does not consume it; app configuration is stored but not yet read by the
+  app; session management revokes every session for an account but does not
+  list individual devices.
+- **Notifications (after provider setup):** owners and admins can send
+  broadcast drafts to every opted-in Android device or send a direct message
+  to one account. Delivery records and device tokens are stored server-side;
+  announcements are sent immediately and are not scheduled. The console
+  reports when its Expo access token is missing, but Firebase/EAS credentials
+  must also be configured. See [`PUSH-NOTIFICATIONS.md`](./PUSH-NOTIFICATIONS.md).
 - **Not connected:** payment processor/refunds/commissions, orders/bookings,
   coupon redemption, vendor onboarding/payouts, public-content moderation,
   and minimum-version enforcement. The console identifies these gaps and does

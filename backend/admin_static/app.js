@@ -30,6 +30,7 @@
     search: "",
     toastTimer: null,
   };
+  let pendingSessionCheck = null;
 
   const $ = (selector) => document.querySelector(selector);
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
@@ -47,7 +48,8 @@
   };
   const fmt = (value) => value === null || value === undefined ? "—" : Number(value).toLocaleString();
   const permitted = (permission) => !permission || state.admin?.permissions.includes(permission);
-  const capability = (id) => state.capabilities[id === "payments" ? "transactions" : id] || "not_connected";
+  const capabilityKey = { overview: "analytics", payments: "transactions" };
+  const capability = (id) => state.capabilities[capabilityKey[id] || id] || "not_connected";
   const capabilityText = (status) => ({
     live: "Connected",
     limited: "Limited",
@@ -70,6 +72,8 @@
   function showLogin(message = "") {
     $("#app").hidden = true;
     $("#login").hidden = false;
+    $("#google-login").disabled = false;
+    $("#google-login").textContent = "Continue with Google";
     $("#login-error").hidden = !message;
     $("#login-error").textContent = message;
   }
@@ -84,12 +88,7 @@
   }
 
   async function api(path, options = {}) {
-    const {
-      data: { session },
-      error: sessionError,
-    } = await state.client.auth.getSession();
-    if (sessionError) throw new Error(`Could not read admin session: ${sessionError.message}`);
-    state.session = session;
+    const session = state.session;
     if (!session?.access_token) {
       throw new Error("Your session has expired. Sign in again.");
     }
@@ -129,6 +128,48 @@
     state.capabilities = response.modules || {};
   }
 
+  async function openAdminSession(session) {
+    state.session = session;
+    if (!session?.access_token) {
+      state.admin = null;
+      showLogin();
+      return;
+    }
+
+    if (pendingSessionCheck?.token === session.access_token) {
+      await pendingSessionCheck.promise;
+      return;
+    }
+
+    const token = session.access_token;
+    const promise = (async () => {
+      showLogin("Verifying your Google account and admin access…");
+      $("#google-login").disabled = true;
+      try {
+        state.admin = await api("/api/admin/me");
+        await loadCapabilities();
+        showApp();
+        await renderPage();
+      } catch (error) {
+        state.admin = null;
+        let message = error.message;
+        try {
+          await state.client.auth.signOut();
+        } catch (signOutError) {
+          message += ` Sign-out also failed: ${signOutError.message}`;
+        }
+        state.session = null;
+        showLogin(message);
+      }
+    })();
+    pendingSessionCheck = { token, promise };
+    try {
+      await promise;
+    } finally {
+      if (pendingSessionCheck?.token === token) pendingSessionCheck = null;
+    }
+  }
+
   function renderNavigation() {
     const nav = $("#navigation");
     nav.innerHTML = MODULES.map((module) => {
@@ -159,6 +200,10 @@
 
   function panel(title, body, subtitle = "", action = "") {
     return `<section class="panel"><header class="panel-header"><div><h2>${esc(title)}</h2>${subtitle ? `<p>${esc(subtitle)}</p>` : ""}</div>${action}</header>${body}</section>`;
+  }
+
+  function pageActions(page, hasNext) {
+    return `<div class="heading-actions"><button class="button button-small" data-table-page="${Math.max(1, page - 1)}" ${page <= 1 ? "disabled" : ""}>Previous</button><button class="button button-small" data-table-page="${page + 1}" ${hasNext ? "" : "disabled"}>Next</button></div>`;
   }
 
   function notice(text, type = "") {
@@ -247,9 +292,9 @@
   }
 
   async function contentPage() {
-    const data = await api("/api/admin/content");
+    const data = await api(`/api/admin/content?page=${state.pageNumber}`);
     const rows = (data.items || []).map((item) => `<tr><td>${cell(item.title, item.id)}</td><td>${esc(item.content_type)}</td><td>${statusPill(item.status)}</td><td>${esc(date(item.updated_at))}</td><td><button class="button button-small" data-content-edit="${esc(item.id)}" data-title="${esc(item.title)}" data-type="${esc(item.content_type)}" data-status="${esc(item.status)}" data-body="${esc(item.body)}">Edit</button></td></tr>`);
-    return `${heading("Content management", "Maintain centrally stored banners, categories, and announcements without implying they are already delivered to the app.", `<button class="button button-primary" id="new-content">＋ New content</button>`)}${notice(`<strong>Limited connection.</strong> ${esc(data.delivery)} Items can be saved as drafts or sent for review.`, "warning")}${panel("CMS items", table(["Title", "Type", "Status", "Last updated", "Actions"], rows), `${data.items.length} items`)}`;
+    return `${heading("Content management", "Maintain centrally stored banners, categories, and announcements without implying they are already delivered to the app.", `<button class="button button-primary" id="new-content">＋ New content</button>`)}${notice(`<strong>Limited connection.</strong> ${esc(data.delivery)} Items can be saved as drafts or sent for review.`, "warning")}${panel("CMS items", table(["Title", "Type", "Status", "Last updated", "Actions"], rows), `${data.items.length} items · page ${data.page}`, pageActions(data.page, rows.length === 50))}`;
   }
 
   async function paymentsPage() {
@@ -263,29 +308,37 @@
   }
 
   async function notificationsPage() {
-    const data = await api("/api/admin/announcements");
-    const rows = (data.items || []).map((item) => `<tr><td>${cell(item.title, item.id)}</td><td>${esc(item.audience)}</td><td>${statusPill(item.status)}</td><td>${esc(date(item.created_at))}</td><td>${esc(item.body)}</td></tr>`);
-    return `${heading("Notifications", "Prepare an announcement for review. Sending and scheduled push delivery are not enabled.", `<button class="button button-primary" id="new-announcement">＋ Draft announcement</button>`)}${notice(`<strong>Drafts only.</strong> ${esc(data.delivery)} This page does not send a push or in-app notification.`, "warning")}${panel("Announcement drafts", table(["Title", "Audience", "State", "Created", "Message"], rows), `${data.items.length} drafts`)}`;
+    const data = await api(`/api/admin/announcements?page=${state.pageNumber}`);
+    const rows = (data.items || []).map((item) => {
+      const audience = item.audience === "account"
+        ? `Account · ${item.target_user_id || "unknown"}`
+        : item.audience;
+      const sendAction = item.status === "draft" && item.audience === "all"
+        ? `<button class="button button-small" type="button" data-announcement-send="${esc(item.id)}">Send now</button>`
+        : "—";
+      return `<tr><td>${cell(item.title, item.id)}</td><td>${esc(audience)}</td><td>${statusPill(item.status)}</td><td>${esc(date(item.sent_at || item.created_at))}</td><td>${esc(item.body)}${item.delivery_error ? `<br><small>${esc(item.delivery_error)}</small>` : ""}</td><td>${sendAction}</td></tr>`;
+    });
+    return `${heading("Notifications", "Send broadcast announcements or a private message to one opted-in Android account.", `<button class="button" id="new-direct-notification">Send to one account</button><button class="button button-primary" id="new-announcement">＋ Draft announcement</button>`)}${notice(`<strong>Privacy:</strong> ${esc(data.delivery)} Messages appear on the device lock screen. Do not include ledger balances, party names, or other sensitive details.`, "warning")}${panel("Push notification history", table(["Title", "Audience", "State", "Updated", "Message", "Action"], rows), `${data.items.length} records · page ${data.page}`, pageActions(data.page, rows.length === 50))}`;
   }
 
   async function reportsPage() {
-    const data = await api("/api/admin/reports");
+    const data = await api(`/api/admin/reports?page=${state.pageNumber}`);
     const reportRows = Object.entries(data.overview || {}).filter(([key]) => key !== "checked_at" && key !== "active_users_note").map(([key, value]) => `<tr><td>${esc(key.replaceAll("_", " "))}</td><td>${esc(value === null ? "Unavailable" : fmt(value))}</td><td>${esc(key === "ledger_transactions" ? "Business ledger activity, not platform revenue" : "Supabase account/workspace metric")}</td></tr>`);
     const userRows = (data.recent_users || []).map((user) => `<tr><td>${esc(user.email || "—")}</td><td>${esc(shortDate(user.created_at))}</td><td>${esc(date(user.last_sign_in_at))}</td></tr>`);
-    return `${heading("Reports & exports", "Export current account and workspace indicators for operational reporting.")}${notice(esc(data.note), "warning")}<div class="heading-actions report-actions"><button class="button button-primary" id="export-overview">Export overview CSV</button><button class="button" id="export-users">Export account directory page CSV</button></div>${panel("Overview metrics", table(["Metric", "Value", "Interpretation"], reportRows), "Current connected data")}${panel("Accounts on first directory page", table(["Email", "Created", "Last sign-in"], userRows), `${userRows.length} accounts returned`)}`;
+    return `${heading("Reports & exports", "Export current account and workspace indicators for operational reporting.")}${notice(esc(data.note), "warning")}<div class="heading-actions report-actions"><button class="button button-primary" id="export-overview">Export overview CSV</button><button class="button" id="export-users">Export account directory page CSV</button></div>${panel("Overview metrics", table(["Metric", "Value", "Interpretation"], reportRows), "Current connected data")}${panel("Accounts", table(["Email", "Created", "Last sign-in"], userRows), `${userRows.length} accounts · page ${data.page}`, pageActions(data.page, userRows.length === 50))}`;
   }
 
   async function rolesPage() {
-    const data = await api("/api/admin/roles");
+    const data = await api(`/api/admin/roles?page=${state.pageNumber}`);
     const owner = state.admin.role === "owner";
     const rows = (data.roles || []).map((item) => `<tr><td>${cell(item.email, item.user_id)}</td><td>${statusPill(item.role)}</td><td>${statusPill(item.active ? "active" : "suspended")}</td><td>${esc(date(item.created_at))}</td><td>${owner ? `<button class="button button-small button-danger" data-role-revoke="${esc(item.user_id)}">Revoke access</button>` : "—"}</td></tr>`);
-    return `${heading("Roles & permissions", "Grant least-privilege staff roles and review who can enter the operations console.", owner ? `<button class="button button-primary" id="new-role">＋ Grant staff access</button>` : "")}${notice(owner ? "Only bootstrap owners can grant or revoke admin roles. A staff member must first have a verified CredEasy account; copy their account ID from User management." : "Your role is read-only for admin access management.")}${panel("Admin access", table(["Team member", "Role", "Access", "Added", "Actions"], rows), `${data.roles.length} role assignments`)}`;
+    return `${heading("Roles & permissions", "Grant least-privilege staff roles and review who can enter the operations console.", owner ? `<button class="button button-primary" id="new-role">＋ Grant staff access</button>` : "")}${notice(owner ? "Only bootstrap owners can grant or revoke admin roles. A staff member must first have a verified CredEasy account; copy their account ID from User management." : "Your role is read-only for admin access management.")}${panel("Admin access", table(["Team member", "Role", "Access", "Added", "Actions"], rows), `${data.roles.length} role assignments · page ${data.page}`, pageActions(data.page, rows.length === 50))}`;
   }
 
   async function supportPage() {
-    const data = await api("/api/admin/tickets");
+    const data = await api(`/api/admin/tickets?page=${state.pageNumber}`);
     const rows = (data.tickets || []).map((item) => `<tr><td>${cell(item.subject, item.id)}</td><td>${esc(item.requester_email)}</td><td>${statusPill(item.priority)}</td><td>${statusPill(item.status)}</td><td>${esc(date(item.updated_at))}</td><td><button class="button button-small" data-ticket-edit="${esc(item.id)}" data-status="${esc(item.status)}" data-priority="${esc(item.priority)}">Update</button></td></tr>`);
-    return `${heading("Support tickets", "Track and resolve support requests in one place.", `<button class="button button-primary" id="new-ticket">＋ Log ticket</button>`)}${panel("Ticket queue", table(["Subject", "Requester", "Priority", "Status", "Updated", "Actions"], rows), `${data.tickets.length} tickets`)}`;
+    return `${heading("Support tickets", "Track and resolve support requests in one place.", `<button class="button button-primary" id="new-ticket">＋ Log ticket</button>`)}${panel("Ticket queue", table(["Subject", "Requester", "Priority", "Status", "Updated", "Actions"], rows), `${data.tickets.length} tickets · page ${data.page}`, pageActions(data.page, rows.length === 50))}`;
   }
 
   async function auditPage() {
@@ -295,9 +348,9 @@
   }
 
   async function configurationPage() {
-    const data = await api("/api/admin/configuration");
+    const data = await api(`/api/admin/configuration?page=${state.pageNumber}`);
     const rows = (data.settings || []).map((item) => `<tr><td>${cell(item.key, item.updated_by)}</td><td><code>${esc(JSON.stringify(item.value))}</code></td><td>${esc(date(item.updated_at))}</td></tr>`);
-    return `${heading("Feature configuration", "Keep proposed app settings in one auditable location.")}${notice(`<strong>Limited connection.</strong> ${esc(data.delivery)} Do not use stored values as active access controls until rollout is implemented.`, "warning")}${panel("Configuration values", table(["Key", "JSON value", "Last updated"], rows), `${data.settings.length} settings`, `<button class="button button-primary button-small" id="new-setting">＋ Add setting</button>`)}`;
+    return `${heading("Feature configuration", "Keep proposed app settings in one auditable location.", `<button class="button button-primary" id="new-setting">＋ Add setting</button>`)}${notice(`<strong>Limited connection.</strong> ${esc(data.delivery)} Do not use stored values as active access controls until rollout is implemented.`, "warning")}${panel("Configuration values", table(["Key", "JSON value", "Last updated"], rows), `${data.settings.length} settings · page ${data.page}`, pageActions(data.page, rows.length === 50))}`;
   }
 
   async function sessionsPage() {
@@ -350,7 +403,11 @@
       const submit = backdrop.querySelector('[type="submit"]');
       submit.disabled = true;
       try {
-        await onSubmit(new FormData(event.currentTarget));
+        const result = await onSubmit(new FormData(event.currentTarget));
+        if (result === false) {
+          submit.disabled = false;
+          return;
+        }
         close();
         await renderPage();
       } catch (error) {
@@ -385,6 +442,10 @@
     }));
     target.querySelectorAll("[data-audit-page]").forEach((button) => button.addEventListener("click", () => {
       state.pageNumber = Number(button.dataset.auditPage);
+      renderPage();
+    }));
+    target.querySelectorAll("[data-table-page]").forEach((button) => button.addEventListener("click", () => {
+      state.pageNumber = Number(button.dataset.tablePage);
       renderPage();
     }));
     target.querySelectorAll("[data-user-detail]").forEach((button) => button.addEventListener("click", async () => {
@@ -430,9 +491,37 @@
 
     $("#new-content")?.addEventListener("click", () => contentModal());
     target.querySelectorAll("[data-content-edit]").forEach((button) => button.addEventListener("click", () => contentModal(button)));
-    $("#new-announcement")?.addEventListener("click", () => openModal("Draft an announcement", `<div class="field field-full"><label for="announcement-title">Title</label><input id="announcement-title" name="title" maxlength="160" required></div><div class="field"><label for="announcement-audience">Audience</label><select id="announcement-audience" name="audience"><option value="all">All users</option><option value="active_30d">Active in last 30 days</option><option value="unverified">Unverified accounts</option></select></div><div class="field field-full"><label for="announcement-body">Message</label><textarea id="announcement-body" name="body" maxlength="4000" required></textarea></div>`, "Save draft", async (form) => {
-      await api("/api/admin/announcements", { method: "POST", body: JSON.stringify({ title: form.get("title").trim(), audience: form.get("audience"), body: form.get("body").trim() }) });
+    $("#new-announcement")?.addEventListener("click", () => openModal("Draft a broadcast announcement", `<div class="field field-full"><label for="announcement-title">Title</label><input id="announcement-title" name="title" maxlength="160" required></div><div class="field field-full"><label for="announcement-body">Message</label><textarea id="announcement-body" name="body" maxlength="4000" required></textarea></div>`, "Save draft", async (form) => {
+      await api("/api/admin/announcements", { method: "POST", body: JSON.stringify({ title: form.get("title").trim(), audience: "all", body: form.get("body").trim() }) });
       toast("Announcement saved as a draft. Nothing was sent.");
+    }));
+    $("#new-direct-notification")?.addEventListener("click", () => openModal(
+      "Send a private account message",
+      `<div class="field field-full"><label for="push-user-id">CredEasy account UUID</label><input id="push-user-id" name="user_id" pattern="[0-9a-fA-F-]{36}" maxlength="36" required><small>Find this ID in User management. Only opted-in Android devices receive the message.</small></div><div class="field field-full"><label for="push-title">Title</label><input id="push-title" name="title" maxlength="160" required></div><div class="field field-full"><label for="push-body">Message</label><textarea id="push-body" name="body" maxlength="4000" required></textarea></div>`,
+      "Send now",
+      async (form) => {
+        const userId = form.get("user_id").trim();
+        if (!/^[0-9a-fA-F-]{36}$/.test(userId)) throw new Error("Enter a valid account UUID.");
+        if (!confirm("Send this message immediately to the selected account’s opted-in Android devices?")) {
+          return false;
+        }
+        const result = await api(`/api/admin/users/${encodeURIComponent(userId)}/push`, {
+          method: "POST",
+          body: JSON.stringify({ title: form.get("title").trim(), body: form.get("body").trim() }),
+        });
+        toast(`Message accepted by the push provider for ${result.accepted} device(s).`);
+      }
+    ));
+    target.querySelectorAll("[data-announcement-send]").forEach((button) => button.addEventListener("click", async () => {
+      if (!confirm("Send this broadcast now to every opted-in Android device? This cannot be recalled.")) return;
+      try {
+        const result = await api(`/api/admin/announcements/${encodeURIComponent(button.dataset.announcementSend)}/send`, { method: "POST" });
+        toast(`Broadcast accepted by the push provider for ${result.accepted} device(s).`);
+        await renderPage();
+      } catch (error) {
+        toast(error.message, true);
+        await renderPage();
+      }
     }));
 
     $("#new-ticket")?.addEventListener("click", () => openModal("Log a support ticket", `<div class="field field-full"><label for="ticket-email">Requester email</label><input id="ticket-email" name="requester_email" type="email" maxlength="320" required></div><div class="field field-full"><label for="ticket-subject">Subject</label><input id="ticket-subject" name="subject" maxlength="200" required></div><div class="field"><label for="ticket-priority">Priority</label><select id="ticket-priority" name="priority"><option>low</option><option selected>normal</option><option>high</option><option>urgent</option></select></div><div class="field field-full"><label for="ticket-description">Description</label><textarea id="ticket-description" name="description" maxlength="4000"></textarea></div>`, "Create ticket", async (form) => {
@@ -550,7 +639,8 @@
     });
     $("#menu-toggle").addEventListener("click", () => $("#sidebar").classList.toggle("sidebar-open"));
     $("#app").hidden = true;
-    $("#login").hidden = true;
+    showLogin("Checking your Google sign-in…");
+    $("#google-login").disabled = true;
     try {
       const configResponse = await fetch("/api/admin/config", { cache: "no-store" });
       const configText = await configResponse.text();
@@ -568,26 +658,21 @@
       state.client = window.supabase.createClient(config.supabase_url, config.supabase_anon_key, {
         auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: window.sessionStorage },
       });
-      state.client.auth.onAuthStateChange((_event, session) => {
+      state.client.auth.onAuthStateChange((event, session) => {
         state.session = session;
-      });
-      const { data } = await state.client.auth.getSession();
-      state.session = data.session;
-      if (state.session) {
-        try {
-          state.admin = await api("/api/admin/me");
-          await loadCapabilities();
-          showApp();
-          await renderPage();
-          return;
-        } catch (error) {
-          await state.client.auth.signOut();
-          state.session = null;
-          showLogin(error.message);
-          return;
+        if (event === "SIGNED_IN" && session) {
+          window.setTimeout(() => {
+            if (state.session?.access_token === session.access_token) {
+              openAdminSession(session).catch((error) => {
+                showLogin(`Could not verify admin access: ${error.message}`);
+              });
+            }
+          }, 0);
         }
-      }
-      showLogin();
+      });
+      const { data, error } = await state.client.auth.getSession();
+      if (error) throw new Error(`Could not read admin session: ${error.message}`);
+      await openAdminSession(data.session);
     } catch (error) {
       showLogin(error.message);
     }

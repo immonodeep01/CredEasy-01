@@ -6,6 +6,55 @@
 -- Do NOT rerun docs/supabase-migration.sql on a populated project; it drops tables.
 -- Android offline data recovery after reinstall also requires the device's
 -- system backup/transfer service; this script does not back up offline data.
+-- Tombstone guards skip nested FK-cascade deletes so deleting an auth user does
+-- not try to create new tombstones that reference the user being deleted.
+
+-- Shared rate-limit state keeps paid voice endpoints capped across API instances.
+create table if not exists public.voice_request_limits (
+    user_id uuid primary key references auth.users(id) on delete cascade,
+    window_started_at timestamptz not null,
+    request_count integer not null check (request_count > 0)
+);
+alter table public.voice_request_limits enable row level security;
+revoke all on public.voice_request_limits from public, anon, authenticated;
+
+create or replace function public.consume_voice_request_limit()
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+    current_user_id uuid := auth.uid();
+    checked_at timestamptz := clock_timestamp();
+    current_count integer;
+begin
+    if current_user_id is null then
+        raise exception using errcode = '42501', message = 'Authentication is required';
+    end if;
+
+    insert into public.voice_request_limits (user_id, window_started_at, request_count)
+    values (current_user_id, checked_at, 1)
+    on conflict (user_id) do update
+    set window_started_at = case
+            when public.voice_request_limits.window_started_at
+                <= checked_at - interval '1 minute'
+            then checked_at
+            else public.voice_request_limits.window_started_at
+        end,
+        request_count = case
+            when public.voice_request_limits.window_started_at
+                <= checked_at - interval '1 minute'
+            then 1
+            else public.voice_request_limits.request_count + 1
+        end
+    returning request_count into current_count;
+
+    return current_count <= 20;
+end;
+$$;
+revoke all on function public.consume_voice_request_limit() from public, anon;
+grant execute on function public.consume_voice_request_limit() to authenticated;
 
 do $$
 declare
@@ -315,9 +364,11 @@ language plpgsql
 as $$
 begin
     if tg_op = 'DELETE' then
-        insert into public.transaction_deletions (user_id, transaction_id)
-        values (old.user_id, old.id::text)
-        on conflict (user_id, transaction_id) do nothing;
+        if pg_trigger_depth() = 1 then
+            insert into public.transaction_deletions (user_id, transaction_id)
+            values (old.user_id, old.id::text)
+            on conflict (user_id, transaction_id) do nothing;
+        end if;
         return old;
     end if;
 
@@ -347,9 +398,11 @@ language plpgsql
 as $$
 begin
     if tg_op = 'DELETE' then
-        insert into public.party_deletions (user_id, party_id)
-        values (old.user_id, old.id::text)
-        on conflict (user_id, party_id) do nothing;
+        if pg_trigger_depth() = 1 then
+            insert into public.party_deletions (user_id, party_id)
+            values (old.user_id, old.id::text)
+            on conflict (user_id, party_id) do nothing;
+        end if;
         return old;
     end if;
 
@@ -379,9 +432,11 @@ language plpgsql
 as $$
 begin
     if tg_op = 'DELETE' then
-        insert into public.bill_deletions (user_id, bill_id)
-        values (old.user_id, old.id::text)
-        on conflict (user_id, bill_id) do nothing;
+        if pg_trigger_depth() = 1 then
+            insert into public.bill_deletions (user_id, bill_id)
+            values (old.user_id, old.id::text)
+            on conflict (user_id, bill_id) do nothing;
+        end if;
         return old;
     end if;
 
@@ -411,9 +466,11 @@ language plpgsql
 as $$
 begin
     if tg_op = 'DELETE' then
-        insert into public.recurring_transaction_deletions (user_id, recurring_id)
-        values (old.user_id, old.id::text)
-        on conflict (user_id, recurring_id) do nothing;
+        if pg_trigger_depth() = 1 then
+            insert into public.recurring_transaction_deletions (user_id, recurring_id)
+            values (old.user_id, old.id::text)
+            on conflict (user_id, recurring_id) do nothing;
+        end if;
         return old;
     end if;
 
@@ -575,9 +632,11 @@ language plpgsql
 as $$
 begin
     if tg_op = 'DELETE' then
-        insert into public.inventory_item_deletions (user_id, item_id)
-        values (old.user_id, old.id)
-        on conflict (user_id, item_id) do nothing;
+        if pg_trigger_depth() = 1 then
+            insert into public.inventory_item_deletions (user_id, item_id)
+            values (old.user_id, old.id)
+            on conflict (user_id, item_id) do nothing;
+        end if;
         return old;
     end if;
 
@@ -754,6 +813,9 @@ alter table public.transactions add column if not exists business_id text;
 alter table public.party_deletions add column if not exists business_id text;
 alter table public.transaction_deletions add column if not exists business_id text;
 alter table public.bills add column if not exists business_id text;
+-- Preserve generated invoice numbers and retail tax-invoice form data in sync.
+alter table public.bills add column if not exists invoice_number text;
+alter table public.bills add column if not exists invoice_details jsonb not null default '{}'::jsonb;
 alter table public.bill_deletions add column if not exists business_id text;
 alter table public.business_profiles add column if not exists business_id text;
 alter table public.inventory_items add column if not exists business_id text;
@@ -833,9 +895,11 @@ language plpgsql
 as $$
 begin
     if tg_op = 'DELETE' then
-        insert into public.inventory_item_deletions (user_id, business_id, item_id)
-        values (old.user_id, old.business_id, old.id)
-        on conflict (user_id, item_id) do nothing;
+        if pg_trigger_depth() = 1 then
+            insert into public.inventory_item_deletions (user_id, business_id, item_id)
+            values (old.user_id, old.business_id, old.id)
+            on conflict (user_id, item_id) do nothing;
+        end if;
         return old;
     end if;
 
@@ -990,6 +1054,56 @@ begin
 end;
 $$;
 
+-- Keep globally unique legacy IDs bound to their original account. Ledger
+-- writes use the caller JWT; this trigger also protects trusted service-role
+-- writes and prevents a transaction from referencing another user's party.
+create or replace function public.guard_ledger_row_owner()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+    if auth.uid() is not null then
+        if auth.uid() <> new.user_id then
+            raise exception using errcode = '42501', message = 'Ledger account mismatch';
+        end if;
+    elsif coalesce(auth.role(), '') <> 'service_role' then
+        raise exception using errcode = '42501', message = 'Authentication is required';
+    end if;
+
+    if tg_op = 'UPDATE' and old.user_id is distinct from new.user_id then
+        raise exception using errcode = '42501', message = 'Ledger row owner cannot be changed';
+    end if;
+
+    if tg_table_name = 'transactions' then
+        if not exists (
+            select 1
+            from public.parties p
+            where p.id = new.party_id
+              and p.user_id = new.user_id
+              and p.business_id = new.business_id
+        ) then
+            raise exception using errcode = '23503', message = 'Transaction party does not belong to this account and business';
+        end if;
+    end if;
+
+    return new;
+end;
+$$;
+
+drop trigger if exists parties_owner_guard on public.parties;
+create trigger parties_owner_guard
+    before insert or update on public.parties
+    for each row execute function public.guard_ledger_row_owner();
+
+drop trigger if exists transactions_owner_guard on public.transactions;
+create trigger transactions_owner_guard
+    before insert or update on public.transactions
+    for each row execute function public.guard_ledger_row_owner();
+
+revoke all on function public.guard_ledger_row_owner() from public, anon;
+
 -- Private image storage for party, transaction, and business-profile media.
 -- Every object path starts with the owning auth user ID.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
@@ -1073,93 +1187,8 @@ begin
 end;
 $$;
 
-create or replace function public.delete_business_workspace(p_business_id text)
-returns void
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-    current_user_id uuid := auth.uid();
-    profile_count integer;
-begin
-    if current_user_id is null then
-        raise exception using errcode = '42501', message = 'Authentication is required';
-    end if;
-    if p_business_id is null or p_business_id = '' then
-        raise exception using errcode = '22023', message = 'Business ID is required';
-    end if;
-
-    perform 1
-    from public.business_profiles
-    where user_id = current_user_id
-    for update;
-
-    if not exists (
-        select 1 from public.business_profiles
-        where user_id = current_user_id and business_id = p_business_id
-    ) then
-        if exists (
-            select 1 from public.business_workspace_deletions
-            where user_id = current_user_id and business_id = p_business_id
-        ) then
-            return;
-        end if;
-        if p_business_id = 'default' then
-            raise exception using errcode = 'P0002', message = 'Business profile was not found';
-        end if;
-        insert into public.business_workspace_deletions (user_id, business_id)
-        values (current_user_id, p_business_id);
-        delete from storage.objects
-        where bucket_id = 'credeasy-ledger-media'
-          and left(name, length(current_user_id::text || '/' || p_business_id || '/'))
-              = current_user_id::text || '/' || p_business_id || '/';
-        return;
-    end if;
-    select count(*) into profile_count
-    from public.business_profiles
-    where user_id = current_user_id;
-    if profile_count <= 1 then
-        raise exception using errcode = '22023', message = 'The last business profile cannot be deleted';
-    end if;
-
-    insert into public.business_workspace_deletions (user_id, business_id)
-    values (current_user_id, p_business_id)
-    on conflict (user_id, business_id) do update set deleted_at = now();
-
-    delete from public.transactions
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.bills
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.recurring_transactions
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.parties
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.inventory_movements
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.inventory_items
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.transaction_deletions
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.party_deletions
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.bill_deletions
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.recurring_transaction_deletions
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.inventory_item_deletions
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from public.business_profiles
-    where user_id = current_user_id and business_id = p_business_id;
-    delete from storage.objects
-    where bucket_id = 'credeasy-ledger-media'
-      and left(name, length(current_user_id::text || '/' || p_business_id || '/'))
-          = current_user_id::text || '/' || p_business_id || '/';
-end;
-$$;
-
-revoke all on function public.delete_business_workspace(text) from public, anon;
-grant execute on function public.delete_business_workspace(text) to authenticated;
+-- Disable workspace deletion while retaining tombstones for old deleted workspaces.
+drop function if exists public.delete_business_workspace(text);
 
 create or replace function public.guard_deleted_business_workspace()
 returns trigger
@@ -1168,9 +1197,29 @@ security definer
 set search_path = public
 as $$
 begin
-    if auth.uid() is null or auth.uid() <> new.user_id then
+    if pg_trigger_depth() > 1 then
+        return new;
+    end if;
+
+    if auth.uid() is not null then
+        if auth.uid() <> new.user_id then
+            raise exception using errcode = '42501', message = 'Business account mismatch';
+        end if;
+    elsif coalesce(auth.role(), '') <> 'service_role' then
         raise exception using errcode = '42501', message = 'Business account mismatch';
     end if;
+
+    if tg_op = 'UPDATE' and (
+        old.user_id is distinct from new.user_id
+        or old.business_id is distinct from new.business_id
+    ) then
+        raise exception using errcode = '42501', message = 'Business ownership cannot be changed';
+    end if;
+
+    perform pg_advisory_xact_lock(
+        hashtextextended(new.user_id::text || ':' || new.business_id, 0)
+    );
+
     if exists (
         select 1 from public.business_workspace_deletions
         where user_id = new.user_id and business_id = new.business_id
@@ -1182,9 +1231,33 @@ end;
 $$;
 
 drop trigger if exists business_profiles_deleted_workspace_guard on public.business_profiles;
-create trigger business_profiles_deleted_workspace_guard
-    before insert or update on public.business_profiles
-    for each row execute function public.guard_deleted_business_workspace();
+do $$
+declare
+    target_table text;
+begin
+    foreach target_table in array array[
+        'business_profiles',
+        'parties',
+        'transactions',
+        'party_deletions',
+        'transaction_deletions',
+        'bills',
+        'bill_deletions',
+        'recurring_transactions',
+        'recurring_transaction_deletions',
+        'inventory_items',
+        'inventory_movements',
+        'inventory_item_deletions'
+    ] loop
+        execute format('drop trigger if exists %I on public.%I',
+            target_table || '_deleted_workspace_guard', target_table);
+        execute format(
+            'create trigger %I before insert or update on public.%I for each row execute function public.guard_deleted_business_workspace()',
+            target_table || '_deleted_workspace_guard', target_table
+        );
+    end loop;
+end;
+$$;
 
 revoke all on function public.guard_deleted_business_workspace() from public, anon;
 

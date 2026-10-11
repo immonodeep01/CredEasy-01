@@ -1,0 +1,8 @@
+# Cloud Build only needs the backend Docker context and its build definition.
+**
+!backend/
+!backend/**
+!cloudbuild.yaml
+backend/.env
+backend/.env.*
+!backend/.env.example

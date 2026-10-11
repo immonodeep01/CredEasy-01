@@ -35,6 +35,7 @@ def theme_urls(markup: str) -> str:
     for filename, slug in (
         ("privacy-policy.html", "privacy-policy"),
         ("terms-and-conditions.html", "terms-and-conditions"),
+        ("delete-account.html", "delete-account"),
     ):
         markup = markup.replace(
             f'href="{filename}"',
@@ -83,7 +84,7 @@ def make_theme() -> None:
         """/*
 Theme Name: CredEasy Marketing
 Description: The CredEasy marketing site and legal pages.
-Version: 1.3.2
+Version: 1.3.3
 Requires at least: 6.0
 Requires PHP: 7.4
 Text Domain: credeasy-marketing
@@ -138,6 +139,9 @@ add_action('wp_head', function (): void {
     } elseif (is_page('terms-and-conditions')) {
         $url = credeasy_page_url('terms-and-conditions');
         $description = 'Read the terms for using the CredEasy website and business ledger app.';
+    } elseif (is_page('delete-account')) {
+        $url = credeasy_page_url('delete-account');
+        $description = 'Learn how to request deletion of your CredEasy account and what information is deleted or retained.';
     }
 
     if (!get_site_icon_url()) {
@@ -593,7 +597,11 @@ add_action('template_redirect', function (): void {
 """,
     )
 
-    for filename in ("privacy-policy.html", "terms-and-conditions.html"):
+    for filename in (
+        "privacy-policy.html",
+        "terms-and-conditions.html",
+        "delete-account.html",
+    ):
         source = (WEBSITE / filename).read_text(encoding="utf-8")
         body = extract(r"<body>(.*?)</body>", source, f"{filename} body")
         body = re.sub(
@@ -656,12 +664,13 @@ INSTALL
 1. Back up the current WordPress site first.
 2. In WordPress, open Appearance > Themes > Add New Theme > Upload Theme.
 3. Upload credeasy-wordpress-theme.zip, install it, then activate it.
-4. Create and publish two WordPress pages:
+4. Create and publish these WordPress pages:
    - Title: Privacy Policy; slug: privacy-policy
    - Title: Terms & Conditions; slug: terms-and-conditions
+   - Title: Delete your CredEasy account; slug: delete-account
    The theme supplies the legal content on these pages.
 5. In WordPress Settings > General, find the CredEasy Admin section near the bottom and save the HTTPS backend URL.
-6. Open the homepage, legal pages and /admin to verify the theme.
+6. Open the homepage, legal pages, /delete-account/ and /admin to verify the theme.
 If /admin still shows Page not found on an existing installation, open Settings >
 Permalinks and select Save Changes once to refresh WordPress's route table.
 The admin page assets load directly from the active theme; an API 404 means the
@@ -741,6 +750,7 @@ by Supabase; WordPress accounts are not granted CredEasy admin access.
             f"{THEME_NAME}/front-page.php",
             f"{THEME_NAME}/page-privacy-policy.php",
             f"{THEME_NAME}/page-terms-and-conditions.php",
+            f"{THEME_NAME}/page-delete-account.php",
             f"{THEME_NAME}/assets/site.js",
             f"{THEME_NAME}/assets/app-ledger.webp",
             f"{THEME_NAME}/assets/app-inventory.webp",

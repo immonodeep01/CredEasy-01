@@ -52,7 +52,9 @@ without rechecking the matching feature on supported Android versions.
 - `eas.json` `production` profile requests an Android App Bundle with `developmentClient: false`.
 - Local Gradle release builds are signed with the debug keystore and are QA-only. Configure EAS production signing before upload.
 - A universal local QA APK previously measured about 132.6 MB. Building only the arm64 ABI produces about 53.3 MB, a 59.8% reduction. The latest local APK is 53,289,064 bytes (SHA-256 `2C2212A039F546ACFAF369EDBBA31686AE386025E163B2872AE82C84EA419948`) and contains only `arm64-v8a`; it will not install on 32-bit-only devices. Use the production AAB profile for Play so Google Play can generate device-specific downloads.
-- `npm audit --omit=dev --audit-level=high` currently fails with reported transitive high-severity advisories. Review and resolve or formally assess these without forcing Expo/React Native major upgrades.
+- `npm audit --omit=dev --audit-level=high` remains failing after updating `compression`, `shell-quote`, and `source-map-js`. It still reports high advisories in Expo's build toolchain, including `braces` and `node-forge` for which the registry currently offers no patched versions. Do not force Expo/React Native major upgrades; formally assess and resolve these before release.
+- `npx expo-doctor` passes 16/18 checks. It warns about the intentionally maintained `yarn.lock` and `package-lock.json` pair, and that checked-in native folders prevent EAS from syncing native config fields from `app.json`. Keep the locks aligned and regenerate/verify native projects from the current Expo config before an EAS production build.
+- The latest QA AAB built successfully at 89,073,541 bytes (SHA-256 `2A8580490176F200A5440FD881283818446C338081E060D613765BB9E06CDC75`). Its signing certificate is `CN=Android Debug`, so this local artifact is QA-only and is not uploadable to Play. The bundle includes `liboboe.so` beside `libreact-native-audio-api.so` for both `arm64-v8a` and `armeabi-v7a`. The configured EAS production profile targets an AAB; production signing credentials and remote versioning still need verification.
 - Verify the public privacy-policy URL, Play listing content, store screenshots, feature graphic, ads declaration, Data safety form, and data-deletion responses in Play Console before production submission.
 
 ### 1.4 Security review
@@ -69,22 +71,41 @@ unlocks the main app; there is no shared headless-safe unlocked-state signal.
 Users must disable App Lock in CredEasy to use Chotu from the widget. This
 restriction avoids exposing ledger data outside the locked app.
 
-### 1.5 Account deletion requirement (🟡 TODO)
+### 1.5 Account deletion requirement (🟡 publish and verify)
 
 CredEasy's first Google OAuth sign-in creates a Supabase user account. Google
-Play's account-deletion rule therefore applies: provide both an in-app account
-deletion path (or an in-app link to the deletion web resource) and a public web
-resource where users can request deletion of the account and associated data.
-The current Settings navigation intentionally does not expose account
-deletion, and no public deletion-request resource has been verified. This is a
-production-submission blocker until both are implemented/deployed and tested.
-Complete Play Console's data-deletion questions as well.
+Play's account-deletion rule therefore applies. Settings provides an explicitly
+destructive, Security-PIN-protected account deletion flow through
+`deleteAccount()`. Public deletion instructions are maintained at
+`website/delete-account.html`; the Managed WordPress theme generates the
+`delete-account` page. Publish that page in WordPress with slug
+`delete-account`, then verify `https://credeasy.live/delete-account/` returns
+the instructions in a signed-out browser before entering it in Play Console.
+The deletion flow removes the account and associated CredEasy cloud records
+when successful, but Google Drive backups and other-device local copies require
+separate removal. Complete Play Console's data-deletion questions accurately;
+do not submit the URL while it is unpublished or returns an error.
+
+### 1.6 Launch-scale verification
+
+The source-level audit for a 10,000-user launch target is recorded in
+`docs/LAUNCH-SCALE-AUDIT.md`. Bounded pagination, shared voice request limits,
+provider circuit breakers, media compression, and API error/slow-request logs
+are implemented. Apply `docs/enable-transaction-realtime.sql` before deploying
+the voice quota backend change. Live RLS query plans and a staging load test
+remain unverified because no staging endpoint or credentials were supplied;
+there is no measured p95 and production was not load-tested.
 
 ---
 
 ## 2. Privacy Policy (website page created; publishing still required)
 
-The marketing site now includes `website/privacy-policy.html` and `website/terms-and-conditions.html`, linked from its footer. After deploying the website to the domain you control, confirm the public URLs load and use the privacy-policy URL in the Play Console. Do not submit a local file URL or an unpublished URL.
+The marketing site includes `website/privacy-policy.html`,
+`website/terms-and-conditions.html`, and `website/delete-account.html`, linked
+from its footer. On Managed WordPress, create and publish pages with matching
+slugs. Confirm the public privacy and deletion URLs load while signed out before
+entering either URL in Play Console. Do not submit a local file URL or an
+unpublished URL.
 
 ---
 

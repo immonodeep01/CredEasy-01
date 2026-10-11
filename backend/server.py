@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, File, UploadFile, HTTPException, Header, Depends, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, APIRouter, File, UploadFile, HTTPException, Header, Depends, Request, WebSocket, WebSocketDisconnect, Query
 from starlette.responses import StreamingResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from dotenv import load_dotenv
@@ -14,6 +14,7 @@ import math
 import os
 import logging
 import re
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -118,11 +119,64 @@ SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
-    yield
+async def lifespan(application: FastAPI):
+    application.state.httpx_client = httpx.AsyncClient(
+        timeout=UPSTREAM_TIMEOUT_SECONDS,
+        limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+    )
+    try:
+        yield
+    finally:
+        await application.state.httpx_client.aclose()
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_api_request_health(request: Request, call_next):
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+
+    started_at = time.perf_counter()
+    try:
+        response = await call_next(request)
+    except Exception:
+        duration_ms = (time.perf_counter() - started_at) * 1000
+        logger.exception(
+            "API request raised an unhandled error "
+            "(method=%s, route=%s, duration_ms=%.1f)",
+            request.method,
+            request.url.path,
+            duration_ms,
+        )
+        raise
+
+    duration_ms = (time.perf_counter() - started_at) * 1000
+    if request.url.path in {
+        "/api/voice/assist",
+        "/api/voice/speak",
+        "/api/voice/transcribe",
+    }:
+        response.headers["X-CredEasy-Backend-Duration-Ms"] = f"{duration_ms:.1f}"
+    if response.status_code >= 500:
+        logger.error(
+            "API request failed (method=%s, route=%s, status=%d, duration_ms=%.1f)",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+    elif duration_ms >= SLOW_API_REQUEST_MS:
+        logger.warning(
+            "Slow API request (method=%s, route=%s, status=%d, duration_ms=%.1f)",
+            request.method,
+            request.url.path,
+            response.status_code,
+            duration_ms,
+        )
+    return response
+
 
 # Wire up OpenTelemetry after `app` exists. Idempotent and safe to call with
 # OTel packages missing.
@@ -138,11 +192,35 @@ USER_RATE_LIMIT_BUCKETS = defaultdict(list)
 # Buckets are swept only once the dict grows past this, so the common path stays
 # O(1). Without any eviction it gained one list per user for the process's life.
 MAX_RATE_LIMIT_BUCKETS = 10_000
+VOICE_CIRCUIT_FAILURE_THRESHOLD = 3
+VOICE_CIRCUIT_OPEN_SECONDS = 30
+VOICE_CIRCUIT_FAILURE_WINDOW_SECONDS = 60
+VOICE_PROVIDER_CIRCUITS: Dict[str, Dict[str, Any]] = {}
+VOICE_PROVIDER_CIRCUIT_LOCK = threading.Lock()
+SLOW_API_REQUEST_MS = 2_000
 
 UPSTREAM_TIMEOUT_SECONDS = 10.0
+VOICE_ASSIST_TIMEOUT_SECONDS = 4.0
+VOICE_ASSIST_MAX_OUTPUT_TOKENS = 192
+VOICE_AUTH_TIMEOUT_SECONDS = 2.5
+VOICE_TTS_TIMEOUT_SECONDS = 3.0
+STREAM_FINALIZE_TIMEOUT_SECONDS = 1.25
 MAX_AUDIO_BYTES = 25 * 1024 * 1024
 MAX_TRANSCRIPT_LEN = 2000
 MAX_CONTEXT_CHARS = 256 * 1024
+VOICE_CONTEXT_FIELDS = {
+    "parties": ("name", "phone", "type", "balance"),
+    "recentTransactions": ("party", "amount", "kind", "note", "date"),
+    "inventory": (
+        "name", "currentStock", "lowStockThreshold", "unit", "price", "sku",
+        "barcode", "hsnCode", "gstRate", "category", "purchasePrice", "location",
+        "description", "taxInclusive",
+    ),
+    "inventoryMovements": (
+        "itemName", "type", "quantityChange", "quantityAfter", "unitCost",
+        "reference", "note", "batchNumber", "expiryDate", "createdAt",
+    ),
+}
 MAX_REPLY_LEN = 4000
 MAX_ACTIONS = 6
 MAX_NAME_LEN = 100
@@ -161,6 +239,23 @@ class VoiceAssistRequest(BaseModel):
 class SpeakRequest(BaseModel):
     text: str = Field(default="", max_length=2000)
     lang: str = Field(default="en", max_length=8)
+
+
+def compact_voice_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    compacted = {
+        key: context[key]
+        for key in ("shopName", "language", "totalReceivable", "totalPayable")
+        if key in context
+    }
+    for collection, fields in VOICE_CONTEXT_FIELDS.items():
+        rows = context.get(collection)
+        if isinstance(rows, list):
+            compacted[collection] = [
+                {key: row[key] for key in fields if key in row}
+                for row in rows
+                if isinstance(row, dict)
+            ]
+    return compacted
 
 
 async def get_authenticated_user(authorization: Optional[str] = Header(None)) -> dict:
@@ -185,10 +280,18 @@ async def get_authenticated_user(authorization: Optional[str] = Header(None)) ->
         raise HTTPException(status_code=500, detail="Authentication is not configured on the server")
 
     try:
-        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as httpx_client:
+        httpx_client = getattr(app.state, "httpx_client", None)
+        if httpx_client is None:
+            async with httpx.AsyncClient(timeout=VOICE_AUTH_TIMEOUT_SECONDS) as temporary_client:
+                resp = await temporary_client.get(
+                    f"{SUPABASE_URL}/auth/v1/user",
+                    headers={"Authorization": f"Bearer {token}", "apikey": SUPABASE_ANON_KEY},
+                )
+        else:
             resp = await httpx_client.get(
                 f"{SUPABASE_URL}/auth/v1/user",
                 headers={"Authorization": f"Bearer {token}", "apikey": SUPABASE_ANON_KEY},
+                timeout=VOICE_AUTH_TIMEOUT_SECONDS,
             )
     except Exception:
         # 503, not 401: "we could not check" is not "your token is bad", and
@@ -286,6 +389,108 @@ def enforce_user_rate_limit(user_id: str, limit: int = VOICE_RATE_LIMIT_PER_MINU
     if len(timestamps) >= limit:
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again shortly.")
     timestamps.append(now)
+
+
+async def enforce_shared_voice_rate_limit(
+    user_id: str,
+    authorization: Optional[str],
+    client: httpx.AsyncClient,
+) -> None:
+    enforce_user_rate_limit(user_id)
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication is required.")
+    try:
+        response = await client.post(
+            f"{SUPABASE_URL}/rest/v1/rpc/consume_voice_request_limit",
+            headers={"Authorization": authorization, "apikey": SUPABASE_ANON_KEY},
+            json={},
+        )
+    except httpx.HTTPError as error:
+        logger.warning(
+            "Shared voice rate-limit check failed (error_type=%s)",
+            type(error).__name__,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Voice service is temporarily unavailable. Please try again shortly.",
+        ) from error
+
+    if response.status_code != 200:
+        logger.error(
+            "Shared voice rate-limit check returned an error (status=%d)",
+            response.status_code,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="Voice service is temporarily unavailable. Please try again shortly.",
+        )
+    try:
+        allowed = response.json()
+    except ValueError as error:
+        logger.error("Shared voice rate-limit check returned invalid JSON")
+        raise HTTPException(
+            status_code=503,
+            detail="Voice service is temporarily unavailable. Please try again shortly.",
+        ) from error
+    if allowed is not True:
+        if allowed is False:
+            raise HTTPException(
+                status_code=429,
+                detail="Voice request limit reached for this account. Please try again shortly.",
+            )
+        logger.error("Shared voice rate-limit check returned an invalid value")
+        raise HTTPException(
+            status_code=503,
+            detail="Voice service is temporarily unavailable. Please try again shortly.",
+        )
+
+
+def check_voice_provider_circuit(provider: str) -> None:
+    now = time.monotonic()
+    with VOICE_PROVIDER_CIRCUIT_LOCK:
+        state = VOICE_PROVIDER_CIRCUITS.setdefault(
+            provider,
+            {"failures": 0, "window_started": now, "open_until": 0.0, "probe": False},
+        )
+        if state["open_until"] > now:
+            raise HTTPException(
+                status_code=503,
+                detail="Voice service is temporarily unavailable. Please try again shortly.",
+            )
+        if state["open_until"]:
+            if state["probe"]:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Voice service is temporarily unavailable. Please try again shortly.",
+                )
+            state["probe"] = True
+            return
+        if now - state["window_started"] >= VOICE_CIRCUIT_FAILURE_WINDOW_SECONDS:
+            state["failures"] = 0
+            state["window_started"] = now
+
+
+def record_voice_provider_success(provider: str) -> None:
+    with VOICE_PROVIDER_CIRCUIT_LOCK:
+        VOICE_PROVIDER_CIRCUITS.pop(provider, None)
+
+
+def record_voice_provider_failure(provider: str) -> None:
+    now = time.monotonic()
+    with VOICE_PROVIDER_CIRCUIT_LOCK:
+        state = VOICE_PROVIDER_CIRCUITS.setdefault(
+            provider,
+            {"failures": 0, "window_started": now, "open_until": 0.0, "probe": False},
+        )
+        state["failures"] += 1
+        if state["probe"] or state["failures"] >= VOICE_CIRCUIT_FAILURE_THRESHOLD:
+            state["open_until"] = now + VOICE_CIRCUIT_OPEN_SECONDS
+            state["probe"] = False
+            logger.error(
+                "Voice provider circuit opened (provider=%s, cooldown_seconds=%d)",
+                provider,
+                VOICE_CIRCUIT_OPEN_SECONDS,
+            )
 
 
 @api_router.get("/auth/me")
@@ -473,6 +678,10 @@ ALLOWED_AUDIO_EXT = {".m4a", ".mp3", ".mp4", ".mpeg", ".mpga", ".wav", ".webm"}
 
 _openai_client: Optional[AsyncOpenAI] = None
 _gemini_client: Optional[AsyncOpenAI] = None
+_vertex_gemini_client: Optional[AsyncOpenAI] = None
+_vertex_credentials: Optional[Any] = None
+_vertex_client_token: Optional[str] = None
+_vertex_credentials_lock = threading.Lock()
 _groq_client: Optional[groq.AsyncGroq] = None
 _google_speech_client: Optional[Any] = None
 _google_tts_client: Optional[Any] = None
@@ -523,6 +732,7 @@ STREAM_CHUNK_LIMIT = 15 * 1024
 async def voice_transcribe_stream(websocket: WebSocket):
     await websocket.accept()
     response_task = None
+    audio_bytes_received = 0
     audio_queue = asyncio.Queue(maxsize=20)
 
     try:
@@ -543,7 +753,12 @@ async def voice_transcribe_stream(websocket: WebSocket):
             )
             await websocket.close(code=1011)
             return
-        enforce_user_rate_limit(str(user["user_id"]))
+        await enforce_shared_voice_rate_limit(
+            str(user["user_id"]),
+            authorization,
+            websocket.app.state.httpx_client,
+        )
+        check_voice_provider_circuit("google_speech")
 
         async def requests():
             yield {
@@ -605,8 +820,6 @@ async def voice_transcribe_stream(websocket: WebSocket):
 
         response_task = asyncio.create_task(forward_transcripts())
         await websocket.send_json({"type": "ready"})
-        audio_bytes_received = 0
-
         while True:
             message = await websocket.receive()
             if message["type"] == "websocket.disconnect":
@@ -635,13 +848,27 @@ async def voice_transcribe_stream(websocket: WebSocket):
 
         await audio_queue.put(None)
         if response_task:
-            await response_task
+            completed, _ = await asyncio.wait(
+                {response_task},
+                timeout=STREAM_FINALIZE_TIMEOUT_SECONDS,
+            )
+            if completed:
+                await response_task
+            else:
+                response_task.cancel()
+                logger.warning(
+                    "Google Cloud streaming transcription finalization timed out "
+                    "(timeout_seconds=%.2f, transcript_chars=%d)",
+                    STREAM_FINALIZE_TIMEOUT_SECONDS,
+                    sum(map(len, final_parts)) + len(interim_part),
+                )
         transcript = " ".join([*final_parts, interim_part]).strip()
         completion_message = {"type": "complete", "text": transcript}
         if detected_language:
             completion_message["language"] = detected_language
         await websocket.send_json(completion_message)
         await websocket.close()
+        record_voice_provider_success("google_speech")
     except HTTPException as error:
         await websocket.send_json({"type": "error", "detail": error.detail})
         await websocket.close(code=4401 if error.status_code == 401 else 1011)
@@ -649,6 +876,7 @@ async def voice_transcribe_stream(websocket: WebSocket):
         if response_task and not response_task.done():
             response_task.cancel()
     except Exception as error:
+        record_voice_provider_failure("google_speech")
         logger.error(
             "Google Cloud streaming transcription failed (error_type=%s, error=%s)",
             type(error).__name__,
@@ -664,16 +892,21 @@ async def voice_transcribe_stream(websocket: WebSocket):
             await websocket.close(code=1011)
         except RuntimeError:
             pass
+    finally:
+        logger.info(
+            "Chotu streaming transcription audio processed "
+            "(audio_bytes=%d, audio_seconds=%.2f)",
+            audio_bytes_received,
+            audio_bytes_received / (STREAM_SAMPLE_RATE * 2),
+        )
+        if response_task and not response_task.done():
+            response_task.cancel()
 
 
 def normalize_gemini_model(model_name: Optional[str]) -> str:
     if not model_name:
-        return "gemini-3.5-flash-lite"
-    normalized = model_name.strip()
-    legacy_aliases = {
-        "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
-    }
-    return legacy_aliases.get(normalized, normalized)
+        return "gemini-2.5-flash-lite"
+    return model_name.strip()
 
 
 def _supabase_error_summary(response: httpx.Response) -> tuple[Optional[str], Optional[str]]:
@@ -704,6 +937,27 @@ def _supabase_error_summary(response: httpx.Response) -> tuple[Optional[str], Op
 
 def get_gemini_api_key() -> Optional[str]:
     return os.environ.get("GEMINI_API_KEY") or None
+
+
+def get_gemini_provider() -> str:
+    return os.environ.get("GEMINI_PROVIDER", "ai-studio").strip().lower()
+
+
+def get_vertex_ai_location() -> str:
+    return os.environ.get("VERTEX_AI_LOCATION", "us").strip().lower() or "us"
+
+
+def _get_vertex_openai_base_url(project: str, location: str) -> str:
+    if location == "global":
+        host = "aiplatform.googleapis.com"
+    elif location in {"us", "eu"}:
+        host = f"aiplatform.{location}.rep.googleapis.com"
+    else:
+        host = f"{location}-aiplatform.googleapis.com"
+    return (
+        f"https://{host}/v1beta1/projects/{project}/locations/"
+        f"{location}/endpoints/openapi"
+    )
 
 
 def get_sarvam_api_key() -> Optional[str]:
@@ -760,15 +1014,60 @@ def get_gemini_client() -> AsyncOpenAI:
         _gemini_client = AsyncOpenAI(
             api_key=api_key,
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            timeout=UPSTREAM_TIMEOUT_SECONDS,
-            max_retries=1,
+            timeout=VOICE_ASSIST_TIMEOUT_SECONDS,
+            max_retries=0,
         )
     return _gemini_client
 
 
+def _get_vertex_gemini_client() -> AsyncOpenAI:
+    global _vertex_gemini_client, _vertex_credentials, _vertex_client_token
+
+    project = get_google_cloud_project()
+    if not project:
+        raise RuntimeError("GOOGLE_CLOUD_PROJECT is required for Vertex AI Gemini")
+
+    from google.auth import default
+    from google.auth.transport.requests import Request
+
+    with _vertex_credentials_lock:
+        if _vertex_credentials is None:
+            _vertex_credentials, _ = default(
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+        if not _vertex_credentials.valid:
+            _vertex_credentials.refresh(Request())
+
+        token = _vertex_credentials.token
+        if not token:
+            raise RuntimeError("Application Default Credentials returned no access token")
+        if _vertex_gemini_client is None or _vertex_client_token != token:
+            location = get_vertex_ai_location()
+            _vertex_gemini_client = AsyncOpenAI(
+                api_key=token,
+                base_url=_get_vertex_openai_base_url(project, location),
+                timeout=VOICE_ASSIST_TIMEOUT_SECONDS,
+                max_retries=0,
+            )
+            _vertex_client_token = token
+        return _vertex_gemini_client
+
+
+async def get_vertex_gemini_client() -> AsyncOpenAI:
+    return await asyncio.to_thread(_get_vertex_gemini_client)
+
+
 @api_router.post("/voice/transcribe")
-async def voice_transcribe(file: UploadFile = File(...), user: dict = Depends(get_authenticated_user)):
-    enforce_user_rate_limit(str(user["user_id"]))
+async def voice_transcribe(
+    request: Request,
+    file: UploadFile = File(...),
+    user: dict = Depends(get_authenticated_user),
+):
+    await enforce_shared_voice_rate_limit(
+        str(user["user_id"]),
+        request.headers.get("authorization"),
+        request.app.state.httpx_client,
+    )
 
     suffix = Path(file.filename or "recording.m4a").suffix.lower() or ".m4a"
     if suffix not in ALLOWED_AUDIO_EXT:
@@ -782,6 +1081,7 @@ async def voice_transcribe(file: UploadFile = File(...), user: dict = Depends(ge
 
     google_project = get_google_cloud_project()
     if google_project:
+        check_voice_provider_circuit("google_speech")
         try:
             google_location = get_google_cloud_speech_location()
             client = get_google_speech_client()
@@ -811,11 +1111,13 @@ async def voice_transcribe(file: UploadFile = File(...), user: dict = Depends(ge
                 ),
                 None,
             )
+            record_voice_provider_success("google_speech")
             return {
                 "text": " ".join(transcript_parts),
                 "language": language_code,
             }
         except Exception as error:
+            record_voice_provider_failure("google_speech")
             logger.error(
                 "Google Cloud Speech-to-Text failed (error_type=%s, error=%s)",
                 type(error).__name__,
@@ -830,27 +1132,33 @@ async def voice_transcribe(file: UploadFile = File(...), user: dict = Depends(ge
     last_error = None
     if get_groq_api_key():
         try:
+            check_voice_provider_circuit("groq_speech")
             groq_client = get_groq_client()
             result = await groq_client.audio.transcriptions.create(
                 model="whisper-large-v3-turbo",  # faster, free tier model
                 file=(f"recording{suffix}", audio),
                 prompt="Hindi and English (Hinglish) shopkeeper ledger speech. Preserve names, numbers and rupee amounts.",
             )
+            record_voice_provider_success("groq_speech")
             return {"text": getattr(result, "text", "") or ""}
         except Exception as e:
+            record_voice_provider_failure("groq_speech")
             logger.warning("Groq transcription failed, falling back to OpenAI: %s", e)
             last_error = e
 
     if get_openai_api_key():
         try:
+            check_voice_provider_circuit("openai_speech")
             openai_client = get_openai_client()
             result = await openai_client.audio.transcriptions.create(
                 model="whisper-1",
                 file=(f"recording{suffix}", audio),
                 prompt="Hindi and English (Hinglish) shopkeeper ledger speech. Preserve names, numbers and rupee amounts.",
             )
+            record_voice_provider_success("openai_speech")
             return {"text": getattr(result, "text", "") or ""}
         except Exception as e:
+            record_voice_provider_failure("openai_speech")
             logger.exception("OpenAI transcription failed")
             last_error = e
 
@@ -964,9 +1272,17 @@ def format_currency_for_speech(text: str, language_code: str) -> str:
 
 
 @api_router.post("/voice/speak")
-async def voice_speak(payload: SpeakRequest, user: dict = Depends(get_authenticated_user)):
+async def voice_speak(
+    request: Request,
+    payload: SpeakRequest,
+    user: dict = Depends(get_authenticated_user),
+):
     """Synthesize text to speech and return validated MP3 bytes."""
-    enforce_user_rate_limit(str(user["user_id"]))
+    await enforce_shared_voice_rate_limit(
+        str(user["user_id"]),
+        request.headers.get("authorization"),
+        request.app.state.httpx_client,
+    )
 
     text = (payload.text or "").strip()
     if not text:
@@ -981,6 +1297,8 @@ async def voice_speak(payload: SpeakRequest, user: dict = Depends(get_authentica
     tts_voice = ""
     google_project = get_google_cloud_project()
     if google_project:
+        check_voice_provider_circuit("google_tts")
+        started_at = time.perf_counter()
         try:
             client = get_google_tts_client()
             # Chirp 3 HD has distinct male Indian voices and supports pace control.
@@ -996,14 +1314,29 @@ async def voice_speak(payload: SpeakRequest, user: dict = Depends(get_authentica
                         "audio_encoding": "MP3",
                         "speaking_rate": 0.98,
                     },
-                }
+                },
+                timeout=VOICE_TTS_TIMEOUT_SECONDS,
+                retry=None,
             )
             audio_bytes = response.audio_content or b""
+            record_voice_provider_success("google_tts")
             tts_provider = "google-cloud"
+            logger.info(
+                "Chotu speech synthesized "
+                "(provider=%s, language=%s, text_chars=%d, audio_bytes=%d, duration_ms=%.1f)",
+                tts_provider,
+                language_code,
+                len(text),
+                len(audio_bytes),
+                (time.perf_counter() - started_at) * 1000,
+            )
         except Exception as error:
+            record_voice_provider_failure("google_tts")
             logger.error(
-                "Google Cloud Text-to-Speech failed (error_type=%s)",
+                "Google Cloud Text-to-Speech failed "
+                "(error_type=%s, duration_ms=%.1f)",
                 type(error).__name__,
+                (time.perf_counter() - started_at) * 1000,
             )
             raise HTTPException(
                 status_code=502,
@@ -1202,30 +1535,6 @@ Only emit ADD_TRANSACTION when an amount AND a party are clearly stated; otherwi
 - When requesting a STOCK_MOVEMENT action, phrase it as a proposal and never claim it was saved; the app asks the user to confirm before changing stock.
 - Avoid markdown, bullet points, emoji, and unnecessary greetings or sign-offs in spoken replies.
 
-Reply ONLY with a single JSON object, no markdown, no code fences:
-{
-  "reply": "<natural spoken-style answer, usually 1-2 short sentences, in the user's language>",
-  "actions": [ ... ]
-}
-
-Allowed actions (0 to 3 items):
-{"type":"ADD_TRANSACTION","partyName":"<name as spoken>","amount":<number>,"txType":"GAVE"|"GOT","note":"<short note or empty>"}
-   - GAVE = shopkeeper gave goods/credit (money receivable). GOT = shopkeeper received payment.
-{"type":"STOCK_MOVEMENT","itemName":"<exact item name>","quantity":<positive number>,"movementType":"purchase"|"sale"|"return"|"damage"|"adjustment","direction":"increase"|"decrease","note":"<short note or empty>"}
-   - purchase and return increase stock; sale and damage decrease it. For adjustment, use the direction the user stated. Never infer a quantity or direction from an ambiguous request.
-{"type":"ADD_PARTY","name":"<name>","phone":"<phone or empty>","openingBalance":<number or 0>,"partyType":"CUSTOMER"|"SUPPLIER"}
-   - Add only on an explicit request. Use the spoken full name and opening balance if given, otherwise 0. The app automatically checks all device contacts for an exact name match.
-{"type":"ASK_PARTY_SPELLING","name":"<name as spoken by user>"}
-   - Ask the user to spell the party name letter by letter. Show in reply.
-{"type":"SELECT_CONTACT","name":"<spelled name>"}
-   - After spelling is confirmed, ask if the contact is in their phone's contact list.
-{"type":"ASK_OPENING_BALANCE","name":"<name>","phone":"<phone or empty>"}
-   - After contact is selected (or skipped), ask if there's an opening balance.
-{"type":"ADD_PARTY_COMPLETE","name":"<name>","phone":"<phone>","openingBalance":<number>,"partyType":"CUSTOMER"|"SUPPLIER"}
-   - When user confirms the amount (or says "nahi"), create the party.
-{"type":"NAVIGATE","route":"dashboard"|"parties"|"billing"|"inventory"|"daybook"|"reports"|"settings"}
-{"type":"REMIND","partyName":"<name>"}
-
 ## ADD PARTY flow:
 - For a clear request such as "add Ramesh as a customer", immediately return ADD_PARTY with the spoken name, stated opening balance (or 0), stated phone (or empty), and inferred party type (default CUSTOMER).
 - Do not ask the user to spell the name or whether it is in contacts. The app searches the complete contact list. If exactly one matching contact is found, it saves the party with that phone. If there is no exact match, the app asks whether to provide a phone number or skip it.
@@ -1377,8 +1686,16 @@ def sanitize_actions(raw: object) -> List[dict]:
 
 
 @api_router.post("/voice/assist")
-async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_authenticated_user)):
-    enforce_user_rate_limit(str(user["user_id"]))
+async def voice_assist(
+    request: Request,
+    payload: VoiceAssistRequest,
+    user: dict = Depends(get_authenticated_user),
+):
+    await enforce_shared_voice_rate_limit(
+        str(user["user_id"]),
+        request.headers.get("authorization"),
+        request.app.state.httpx_client,
+    )
 
     transcript = payload.transcript.strip()
     if not transcript:
@@ -1386,7 +1703,12 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
 
     # The ledger context is pasted verbatim into the prompt, so an oversized one
     # is a token-cost amplifier as much as a memory concern.
-    context_json = json.dumps(payload.context, ensure_ascii=False, default=str)
+    context_json = json.dumps(
+        compact_voice_context(payload.context),
+        ensure_ascii=False,
+        default=str,
+        separators=(",", ":"),
+    )
     if len(context_json) > MAX_CONTEXT_CHARS:
         raise HTTPException(status_code=413, detail="Ledger context is too large to send.")
 
@@ -1398,8 +1720,8 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
     )
 
     messages: List[Dict[str, str]] = [{"role": "system", "content": VOICE_SYSTEM_PROMPT}]
-    # Include last 6 conversation turns so the model can ask clarifying questions.
-    for turn in payload.history[-6:]:
+    # A short recent window preserves follow-up context without inflating prompt time.
+    for turn in payload.history[-3:]:
         messages.append({"role": "user", "content": turn.get("user", "")})
         if turn.get("assistant"):
             messages.append({"role": "assistant", "content": turn["assistant"]})
@@ -1408,27 +1730,63 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
     text = ""
     last_error = None
 
-    # When configured, Gemini is the selected assistant provider. Do not silently
-    # send ledger context to another provider if this request fails.
-    if get_gemini_api_key():
+    # Keep all business context on the explicitly configured Gemini endpoint.
+    gemini_provider = get_gemini_provider()
+    if gemini_provider not in {"ai-studio", "vertex"}:
+        raise HTTPException(status_code=500, detail="GEMINI_PROVIDER must be ai-studio or vertex")
+    vertex_enabled = gemini_provider == "vertex"
+    gemini_configured = vertex_enabled or bool(get_gemini_api_key())
+    if vertex_enabled and not get_google_cloud_project():
+        raise HTTPException(
+            status_code=503,
+            detail="Chotu is not configured for Vertex AI. Set GOOGLE_CLOUD_PROJECT on the backend.",
+        )
+
+    # Do not silently send ledger context to another provider if Gemini fails.
+    if gemini_configured:
         gemini_model = normalize_gemini_model(os.environ.get("GEMINI_MODEL"))
+        model_started_at = time.perf_counter()
+        gemini_circuit = f"{gemini_provider}_assistant"
+        check_voice_provider_circuit(gemini_circuit)
         try:
-            gemini_client = get_gemini_client()
+            if vertex_enabled:
+                gemini_client = await get_vertex_gemini_client()
+                if not gemini_model.startswith("google/"):
+                    gemini_model = f"google/{gemini_model}"
+            else:
+                gemini_client = get_gemini_client()
             response = await gemini_client.chat.completions.create(
                 model=gemini_model,
                 messages=messages,
                 temperature=0.7,
                 response_format={"type": "json_object"},
+                max_tokens=VOICE_ASSIST_MAX_OUTPUT_TOKENS,
             )
             text = response.choices[0].message.content or ""
+            record_voice_provider_success(gemini_circuit)
+            usage = getattr(response, "usage", None)
+            logger.info(
+                "Chotu model response completed "
+                "(provider=%s, model=%s, duration_ms=%.1f, prompt_tokens=%s, "
+                "completion_tokens=%s, context_chars=%d, history_turns=%d)",
+                gemini_provider,
+                gemini_model,
+                (time.perf_counter() - model_started_at) * 1000,
+                getattr(usage, "prompt_tokens", "unknown"),
+                getattr(usage, "completion_tokens", "unknown"),
+                len(context_json),
+                min(len(payload.history), 3),
+            )
         except Exception as error:
+            record_voice_provider_failure(gemini_circuit)
             logger.error(
-                "Gemini chat completion failed (model=%s, error_type=%s, error=%s)",
+                "Gemini chat completion failed (provider=%s, model=%s, error_type=%s, error=%s)",
+                gemini_provider,
                 gemini_model,
                 type(error).__name__,
                 error,
             )
-            if getattr(error, "status_code", None) == 402:
+            if not vertex_enabled and getattr(error, "status_code", None) == 402:
                 raise HTTPException(
                     status_code=503,
                     detail=(
@@ -1442,6 +1800,7 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
         # Backward-compatible providers remain available until Gemini is configured.
         if get_groq_api_key():
             try:
+                check_voice_provider_circuit("groq_assistant")
                 groq_client = get_groq_client()
                 models_response = await groq_client.models.list()
                 available_models = [
@@ -1472,13 +1831,16 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
                     temperature=0.7,
                 )
                 text = response.choices[0].message.content or ""
+                record_voice_provider_success("groq_assistant")
             except Exception as error:
+                record_voice_provider_failure("groq_assistant")
                 logger.warning("Groq chat completion failed (error_type=%s)", type(error).__name__)
                 last_error = error
 
     # Fallback to OpenAI only when Gemini is not configured.
-    if not text and not get_gemini_api_key() and get_openai_api_key():
+    if not text and not gemini_configured and get_openai_api_key():
         try:
+            check_voice_provider_circuit("openai_assistant")
             openai_client = get_openai_client()
             response = await openai_client.chat.completions.create(
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
@@ -1487,7 +1849,9 @@ async def voice_assist(payload: VoiceAssistRequest, user: dict = Depends(get_aut
                 response_format={"type": "json_object"},
             )
             text = response.choices[0].message.content or ""
+            record_voice_provider_success("openai_assistant")
         except Exception as e:
+            record_voice_provider_failure("openai_assistant")
             logger.exception("OpenAI chat failed")
             last_error = e
 
@@ -2645,11 +3009,9 @@ async def sms_parse(req: SmsParseRequest, user: dict = Depends(get_authenticated
 # ---------------------------------------------------------------------------
 # Ledger CRUD — parties and transactions
 # ---------------------------------------------------------------------------
-# Uses the service-role key so the server can write rows directly without RLS.
-# The user_id from the validated JWT is always written into each row, so data
-# from one user is never visible to another. The frontend generates UUIDs for
-# all ids so this matches the supabase-migration.sql schema (UUID PKs).
-SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+# Forward the already-verified caller token so Supabase RLS also protects
+# conflict updates. A service-role upsert could otherwise reassign a row whose
+# globally unique ID belongs to another account.
 
 
 class PartyIn(BaseModel):
@@ -2691,36 +3053,84 @@ class TxOut(BaseModel):
     created_at: Optional[str] = ""
 
 
-def _supabase_headers(api_key: str) -> dict:
-    return {"Authorization": f"Bearer {api_key}", "apikey": api_key, "Content-Type": "application/json"}
+def _supabase_headers(api_key: str, authorization: Optional[str] = None) -> dict:
+    headers = {"apikey": api_key, "Content-Type": "application/json"}
+    if authorization:
+        headers["Authorization"] = authorization
+    return headers
+
+
+def _verified_user_supabase_headers(request: Request) -> dict:
+    authorization = request.headers.get("authorization")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    return _supabase_headers(SUPABASE_ANON_KEY, authorization)
+
+
+async def _fetch_legacy_supabase_page(
+    request: Request,
+    table: str,
+    user_id: str,
+    page_size: int,
+    offset: int,
+) -> list[dict[str, Any]]:
+    try:
+        response = await request.app.state.httpx_client.get(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=_verified_user_supabase_headers(request),
+            params={
+                "user_id": f"eq.{user_id}",
+                "select": "*",
+                "order": "created_at.desc",
+                "limit": page_size,
+                "offset": offset,
+            },
+        )
+    except httpx.HTTPError as error:
+        logger.exception("Legacy %s page request failed", table)
+        raise HTTPException(status_code=503, detail="Could not load the requested page.") from error
+
+    if response.status_code != 200:
+        logger.error("Legacy %s page request returned status %d", table, response.status_code)
+        raise HTTPException(status_code=502, detail="Could not load the requested page.")
+    try:
+        rows = response.json()
+    except ValueError as error:
+        logger.exception("Legacy %s page response was not JSON", table)
+        raise HTTPException(status_code=502, detail="Could not load the requested page.") from error
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        logger.error("Legacy %s page response was not a list", table)
+        raise HTTPException(status_code=502, detail="Could not load the requested page.")
+    return rows
 
 
 @api_router.get("/parties", response_model=dict)
-async def list_parties(user: dict = Depends(get_authenticated_user)):
-    """Return all parties for the authenticated user, newest first."""
-    if not SERVICE_ROLE_KEY:
-        return {"parties": []}
-    try:
-        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
-            resp = await client.get(
-                f"{SUPABASE_URL}/rest/v1/parties",
-                headers=_supabase_headers(SERVICE_ROLE_KEY),
-                params={"user_id": f"eq.{user['user_id']}", "select": "*", "order": "created_at.desc"},
-            )
-        if resp.status_code != 200:
-            logger.warning(f"list_parties: Supabase returned {resp.status_code}")
-            return {"parties": []}
-        return {"parties": resp.json()}
-    except Exception:
-        logger.exception("list_parties failed")
-        return {"parties": []}
+async def list_parties(
+    request: Request,
+    page_size: int = Query(default=50, ge=1, le=50),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
+    user: dict = Depends(get_authenticated_user),
+):
+    """Return one bounded page of parties for the authenticated user."""
+    parties = await _fetch_legacy_supabase_page(
+        request, "parties", user["user_id"], page_size, offset
+    )
+    return {
+        "parties": parties,
+        "page_size": page_size,
+        "offset": offset,
+        "next_offset": offset + len(parties) if len(parties) == page_size else None,
+    }
 
 
 @api_router.post("/parties", response_model=dict)
-async def upsert_party(party: PartyIn, user: dict = Depends(get_authenticated_user)):
+async def upsert_party(
+    party: PartyIn,
+    request: Request,
+    user: dict = Depends(get_authenticated_user),
+):
     """Upsert a party. The frontend always sends the full object on every save."""
-    if not SERVICE_ROLE_KEY:
-        return {"ok": False, "error": "backend not configured"}
+    headers = _verified_user_supabase_headers(request)
     row = {
         "id": party.id,
         "user_id": user["user_id"],
@@ -2731,12 +3141,15 @@ async def upsert_party(party: PartyIn, user: dict = Depends(get_authenticated_us
         "created_at": party.created_at or datetime.utcnow().isoformat(),
     }
     try:
-        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
-            resp = await client.post(
-                f"{SUPABASE_URL}/rest/v1/parties",
-                headers={**_supabase_headers(SERVICE_ROLE_KEY), "Prefer": "resolution=merge-duplicates"},
-                json=row,
-            )
+        resp = await request.app.state.httpx_client.post(
+            f"{SUPABASE_URL}/rest/v1/parties",
+            headers={
+                **headers,
+                "Prefer": "resolution=merge-duplicates",
+            },
+            json=row,
+            timeout=UPSTREAM_TIMEOUT_SECONDS,
+        )
         if resp.status_code not in (200, 201):
             logger.warning(f"upsert_party: Supabase returned {resp.status_code}: {resp.text}")
             return {"ok": False, "error": "could not save party"}
@@ -2747,31 +3160,32 @@ async def upsert_party(party: PartyIn, user: dict = Depends(get_authenticated_us
 
 
 @api_router.get("/transactions", response_model=dict)
-async def list_transactions(user: dict = Depends(get_authenticated_user)):
-    """Return all transactions for the authenticated user, newest first."""
-    if not SERVICE_ROLE_KEY:
-        return {"transactions": []}
-    try:
-        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
-            resp = await client.get(
-                f"{SUPABASE_URL}/rest/v1/transactions",
-                headers=_supabase_headers(SERVICE_ROLE_KEY),
-                params={"user_id": f"eq.{user['user_id']}", "select": "*", "order": "created_at.desc"},
-            )
-        if resp.status_code != 200:
-            logger.warning(f"list_transactions: Supabase returned {resp.status_code}")
-            return {"transactions": []}
-        return {"transactions": resp.json()}
-    except Exception:
-        logger.exception("list_transactions failed")
-        return {"transactions": []}
+async def list_transactions(
+    request: Request,
+    page_size: int = Query(default=50, ge=1, le=50),
+    offset: int = Query(default=0, ge=0, le=1_000_000),
+    user: dict = Depends(get_authenticated_user),
+):
+    """Return one bounded page of transactions for the authenticated user."""
+    transactions = await _fetch_legacy_supabase_page(
+        request, "transactions", user["user_id"], page_size, offset
+    )
+    return {
+        "transactions": transactions,
+        "page_size": page_size,
+        "offset": offset,
+        "next_offset": offset + len(transactions) if len(transactions) == page_size else None,
+    }
 
 
 @api_router.post("/transactions", response_model=dict)
-async def append_transaction(tx: TxIn, user: dict = Depends(get_authenticated_user)):
+async def append_transaction(
+    tx: TxIn,
+    request: Request,
+    user: dict = Depends(get_authenticated_user),
+):
     """Append a transaction. Called after every local save."""
-    if not SERVICE_ROLE_KEY:
-        return {"ok": False, "error": "backend not configured"}
+    headers = _verified_user_supabase_headers(request)
     row = {
         "id": tx.id,
         "user_id": user["user_id"],
@@ -2784,12 +3198,15 @@ async def append_transaction(tx: TxIn, user: dict = Depends(get_authenticated_us
         "created_at": datetime.utcnow().isoformat(),
     }
     try:
-        async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_SECONDS) as client:
-            resp = await client.post(
-                f"{SUPABASE_URL}/rest/v1/transactions",
-                headers={**_supabase_headers(SERVICE_ROLE_KEY), "Prefer": "resolution=merge-duplicates"},
-                json=row,
-            )
+        resp = await request.app.state.httpx_client.post(
+            f"{SUPABASE_URL}/rest/v1/transactions",
+            headers={
+                **headers,
+                "Prefer": "resolution=merge-duplicates",
+            },
+            json=row,
+            timeout=UPSTREAM_TIMEOUT_SECONDS,
+        )
         if resp.status_code not in (200, 201):
             logger.warning(f"append_transaction: Supabase returned {resp.status_code}: {resp.text}")
             return {"ok": False, "error": "could not save transaction"}
@@ -2931,6 +3348,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=[
+        "X-CredEasy-Backend-Duration-Ms",
         "X-CredEasy-TTS-Provider",
         "X-CredEasy-TTS-Language",
         "X-CredEasy-TTS-Voice",
